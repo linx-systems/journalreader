@@ -1,0 +1,354 @@
+use crate::error::JournalError;
+use crate::journal::types::{BootInfo, JournalEntry, JournalFilter, JournalQueryResult, SystemUnit};
+use regex::Regex;
+use serde_json::Value;
+use std::process::Command;
+
+pub struct JournalReader;
+
+impl JournalReader {
+    pub fn query(filter: &JournalFilter) -> Result<JournalQueryResult, JournalError> {
+        let mut cmd = Command::new("journalctl");
+        cmd.arg("-o").arg("json");
+        cmd.arg("--no-pager");
+
+        // Apply unit filters
+        for unit in &filter.units {
+            cmd.arg("-u").arg(unit);
+        }
+
+        // Priority range
+        if let Some(min) = filter.priority_min {
+            if let Some(max) = filter.priority_max {
+                if min == max {
+                    cmd.arg("-p").arg(min.to_string());
+                } else {
+                    cmd.arg("-p").arg(format!("{}..{}", min, max));
+                }
+            } else {
+                cmd.arg("-p").arg(format!("{}..7", min));
+            }
+        } else if let Some(max) = filter.priority_max {
+            cmd.arg("-p").arg(format!("0..{}", max));
+        }
+
+        // Time filters
+        if let Some(since) = &filter.since {
+            cmd.arg("-S").arg(since);
+        }
+
+        if let Some(until) = &filter.until {
+            cmd.arg("-U").arg(until);
+        }
+
+        // Boot filter
+        if let Some(boot_id) = &filter.boot_id {
+            cmd.arg("-b").arg(boot_id);
+        } else if let Some(offset) = filter.boot_offset {
+            cmd.arg("-b").arg(offset.to_string());
+        }
+
+        // Identifier filter
+        if let Some(identifier) = &filter.identifier {
+            cmd.arg("-t").arg(identifier);
+        }
+
+        // Grep pattern
+        if let Some(pattern) = &filter.grep_pattern {
+            if !pattern.is_empty() {
+                // Validate regex first
+                if Regex::new(pattern).is_err() {
+                    return Err(JournalError::InvalidRegex(pattern.clone()));
+                }
+                cmd.arg("-g").arg(pattern);
+                if !filter.case_sensitive {
+                    cmd.arg("--case-sensitive=false");
+                }
+            }
+        }
+
+        // Cursor for pagination
+        if let Some(cursor) = &filter.after_cursor {
+            cmd.arg("--after-cursor").arg(cursor);
+        }
+
+        // Reverse order (newest first)
+        if filter.reverse {
+            cmd.arg("-r");
+        }
+
+        // Limit
+        // Fetch one extra to determine if there are more entries
+        cmd.arg("-n").arg((filter.limit + 1).to_string());
+
+        let output = cmd.output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("No journal files were found")
+                || stderr.contains("Failed to open journal")
+            {
+                return Err(JournalError::JournalNotAvailable);
+            }
+            if stderr.contains("Permission denied") || stderr.contains("access denied") {
+                return Err(JournalError::PermissionDenied);
+            }
+            return Err(JournalError::ExecutionError(stderr.to_string()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut entries = Vec::new();
+
+        for line in stdout.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            match Self::parse_entry(line) {
+                Ok(entry) => entries.push(entry),
+                Err(e) => {
+                    eprintln!("Warning: Failed to parse journal entry: {}", e);
+                    continue;
+                }
+            }
+        }
+
+        // Determine if there are more entries
+        let has_more = entries.len() > filter.limit as usize;
+        if has_more {
+            entries.pop(); // Remove the extra entry we fetched
+        }
+
+        let cursor_start = entries.first().map(|e| e.cursor.clone());
+        let cursor_end = entries.last().map(|e| e.cursor.clone());
+
+        Ok(JournalQueryResult {
+            entries,
+            has_more,
+            cursor_start,
+            cursor_end,
+        })
+    }
+
+    pub fn count(filter: &JournalFilter) -> Result<u64, JournalError> {
+        let mut cmd = Command::new("journalctl");
+        cmd.arg("--no-pager");
+        cmd.arg("-q"); // Quiet mode
+
+        // Apply same filters as query (except limit and cursor)
+        for unit in &filter.units {
+            cmd.arg("-u").arg(unit);
+        }
+
+        if let Some(min) = filter.priority_min {
+            if let Some(max) = filter.priority_max {
+                cmd.arg("-p").arg(format!("{}..{}", min, max));
+            } else {
+                cmd.arg("-p").arg(format!("{}..7", min));
+            }
+        }
+
+        if let Some(since) = &filter.since {
+            cmd.arg("-S").arg(since);
+        }
+
+        if let Some(until) = &filter.until {
+            cmd.arg("-U").arg(until);
+        }
+
+        if let Some(boot_id) = &filter.boot_id {
+            cmd.arg("-b").arg(boot_id);
+        } else if let Some(offset) = filter.boot_offset {
+            cmd.arg("-b").arg(offset.to_string());
+        }
+
+        if let Some(pattern) = &filter.grep_pattern {
+            if !pattern.is_empty() {
+                cmd.arg("-g").arg(pattern);
+                if !filter.case_sensitive {
+                    cmd.arg("--case-sensitive=false");
+                }
+            }
+        }
+
+        // Output only count
+        cmd.arg("--output=cat");
+
+        let output = cmd.output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let count = stdout.lines().count() as u64;
+
+        Ok(count)
+    }
+
+    pub fn list_units() -> Result<Vec<SystemUnit>, JournalError> {
+        // Get units that have journal entries
+        let output = Command::new("journalctl")
+            .arg("-F")
+            .arg("_SYSTEMD_UNIT")
+            .arg("--no-pager")
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(JournalError::ExecutionError(stderr.to_string()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut units: Vec<SystemUnit> = stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|name| SystemUnit {
+                name: name.to_string(),
+                description: None,
+                load_state: None,
+                active_state: None,
+                sub_state: None,
+            })
+            .collect();
+
+        units.sort_by(|a, b| a.name.cmp(&b.name));
+        units.dedup_by(|a, b| a.name == b.name);
+
+        Ok(units)
+    }
+
+    pub fn list_boots() -> Result<Vec<BootInfo>, JournalError> {
+        let output = Command::new("journalctl")
+            .arg("--list-boots")
+            .arg("--no-pager")
+            .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(JournalError::ExecutionError(stderr.to_string()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut boots = Vec::new();
+
+        for line in stdout.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            // Format: offset boot_id timestamp—timestamp
+            // Example: -1 abc123def456... Thu 2024-01-01 10:00:00 UTC—Thu 2024-01-01 18:00:00 UTC
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let offset = parts[0].parse::<i32>().unwrap_or(0);
+                let boot_id = parts[1].to_string();
+
+                boots.push(BootInfo {
+                    boot_id,
+                    boot_offset: offset,
+                    first_entry: None,
+                    last_entry: None,
+                });
+            }
+        }
+
+        Ok(boots)
+    }
+
+    fn parse_entry(json_line: &str) -> Result<JournalEntry, JournalError> {
+        let value: Value =
+            serde_json::from_str(json_line).map_err(|e| JournalError::ParseError(e.to_string()))?;
+
+        let cursor = Self::get_string(&value, "__CURSOR").unwrap_or_default();
+        let realtime_timestamp = Self::get_timestamp(&value, "__REALTIME_TIMESTAMP");
+        let monotonic_timestamp = Self::get_optional_timestamp(&value, "__MONOTONIC_TIMESTAMP");
+        let boot_id = Self::get_string(&value, "_BOOT_ID").unwrap_or_default();
+
+        let message = Self::get_string(&value, "MESSAGE").unwrap_or_default();
+        let priority = Self::get_priority(&value);
+
+        let syslog_identifier = Self::get_string(&value, "SYSLOG_IDENTIFIER");
+        let systemd_unit = Self::get_string(&value, "_SYSTEMD_UNIT");
+        let pid = Self::get_u32(&value, "_PID");
+        let uid = Self::get_u32(&value, "_UID");
+        let gid = Self::get_u32(&value, "_GID");
+        let exe = Self::get_string(&value, "_EXE");
+        let cmdline = Self::get_string(&value, "_CMDLINE");
+        let hostname = Self::get_string(&value, "_HOSTNAME");
+        let comm = Self::get_string(&value, "_COMM");
+
+        Ok(JournalEntry {
+            cursor,
+            realtime_timestamp,
+            monotonic_timestamp,
+            boot_id,
+            message,
+            priority,
+            syslog_identifier,
+            systemd_unit,
+            pid,
+            uid,
+            gid,
+            exe,
+            cmdline,
+            hostname,
+            comm,
+        })
+    }
+
+    fn get_string(value: &Value, key: &str) -> Option<String> {
+        value.get(key).and_then(|v| {
+            if let Some(s) = v.as_str() {
+                Some(s.to_string())
+            } else if let Some(arr) = v.as_array() {
+                // Sometimes journalctl returns arrays of bytes
+                let bytes: Vec<u8> = arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect();
+                String::from_utf8(bytes).ok()
+            } else {
+                None
+            }
+        })
+    }
+
+    fn get_timestamp(value: &Value, key: &str) -> i64 {
+        value
+            .get(key)
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    s.parse::<i64>().ok()
+                } else {
+                    v.as_i64()
+                }
+            })
+            .unwrap_or(0)
+    }
+
+    fn get_optional_timestamp(value: &Value, key: &str) -> Option<i64> {
+        value.get(key).and_then(|v| {
+            if let Some(s) = v.as_str() {
+                s.parse::<i64>().ok()
+            } else {
+                v.as_i64()
+            }
+        })
+    }
+
+    fn get_priority(value: &Value) -> u8 {
+        value
+            .get("PRIORITY")
+            .and_then(|v| {
+                if let Some(s) = v.as_str() {
+                    s.parse::<u8>().ok()
+                } else {
+                    v.as_u64().map(|n| n as u8)
+                }
+            })
+            .unwrap_or(6) // Default to info
+    }
+
+    fn get_u32(value: &Value, key: &str) -> Option<u32> {
+        value.get(key).and_then(|v| {
+            if let Some(s) = v.as_str() {
+                s.parse::<u32>().ok()
+            } else {
+                v.as_u64().map(|n| n as u32)
+            }
+        })
+    }
+}

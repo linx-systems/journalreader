@@ -1,0 +1,140 @@
+import { useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useJournalLogs } from '../../hooks/useJournalLogs';
+import { useFilterStore } from '../../stores/filterStore';
+import { LogEntryRow } from './LogEntry';
+import { Loader2, AlertCircle, FileSearch } from 'lucide-react';
+
+export function LogViewer() {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const { entries, isLoading, error, hasMore, loadMore } = useJournalLogs();
+  const { filter } = useFilterStore();
+
+  const rowVirtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 48,
+    overscan: 10,
+  });
+
+  const handleScroll = useCallback(() => {
+    if (!parentRef.current) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+
+    if (isNearBottom && hasMore && !isLoading) {
+      loadMore();
+    }
+  }, [hasMore, isLoading, loadMore]);
+
+  if (error) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center p-8">
+          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+            Error loading logs
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md">
+            {error}
+          </p>
+          {error.includes('Permission') && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">
+              Try adding your user to the <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">adm</code> group:
+              <br />
+              <code className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded block mt-2">
+                sudo usermod -aG adm $USER
+              </code>
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!isLoading && entries.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center p-8">
+          <FileSearch className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+            No logs found
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Try adjusting your filters or time range
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500">
+        <div className="w-6"></div>
+        <div className="w-28">Time</div>
+        <div className="w-16 text-center">Level</div>
+        <div className="w-48">Unit</div>
+        <div className="flex-1">Message</div>
+      </div>
+
+      {/* Virtualized list */}
+      <div
+        ref={parentRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-auto"
+      >
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative',
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const entry = entries[virtualRow.index];
+            return (
+              <div
+                key={entry.cursor}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <LogEntryRow
+                  entry={entry}
+                  searchPattern={filter.grepPattern}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Loading indicator */}
+        {isLoading && (
+          <div className="flex items-center justify-center py-4">
+            <Loader2 className="h-5 w-5 text-sky-500 animate-spin" />
+            <span className="ml-2 text-sm text-gray-500">Loading logs...</span>
+          </div>
+        )}
+
+        {/* Load more indicator */}
+        {hasMore && !isLoading && (
+          <div className="flex items-center justify-center py-4">
+            <button
+              onClick={loadMore}
+              className="text-sm text-sky-600 hover:text-sky-700 dark:text-sky-400"
+            >
+              Load more...
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

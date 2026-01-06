@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color: #213547;
+  background-color: #ffffff;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f8fafc;
+    background-color: #0f172a;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb {
+    background: #475569;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+  }
+}
+
+/* Log entry colors */
+.log-emerg { @apply text-red-600 dark:text-red-400 font-bold; }
+.log-alert { @apply text-orange-600 dark:text-orange-400 font-bold; }
+.log-crit { @apply text-amber-600 dark:text-amber-400 font-semibold; }
+.log-err { @apply text-yellow-600 dark:text-yellow-400; }
+.log-warning { @apply text-lime-600 dark:text-lime-400; }
+.log-notice { @apply text-green-600 dark:text-green-400; }
+.log-info { @apply text-sky-600 dark:text-sky-400; }
+.log-debug { @apply text-gray-500 dark:text-gray-400; }
