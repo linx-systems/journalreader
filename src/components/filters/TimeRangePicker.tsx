@@ -33,8 +33,8 @@ export function TimeRangePicker() {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
-        <Clock className="h-4 w-4 text-gray-500" />
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+        <Clock className="h-4 w-4 text-theme-secondary" />
+        <label className="block text-sm font-medium text-theme">
           Time Range
         </label>
       </div>
@@ -46,8 +46,8 @@ export function TimeRangePicker() {
             className={clsx(
               'px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
               isPresetSelected(preset)
-                ? 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-700'
-                : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
+                ? 'selection-theme accent-theme border-current'
+                : 'bg-theme text-theme-secondary border-theme hover:bg-theme-secondary'
             )}
           >
             {preset.label}

@@ -36,14 +36,14 @@ export function Toolbar() {
   };
 
   return (
-    <div className="flex items-center justify-between px-4 py-2 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
+    <div className="flex items-center justify-between px-4 py-2 bg-theme border-b border-theme">
       <div className="flex items-center gap-4">
-        <span className="text-sm text-gray-600 dark:text-gray-400">
+        <span className="text-sm text-theme-secondary">
           {isLoading ? (
             'Loading...'
           ) : (
             <>
-              <span className="font-medium text-gray-900 dark:text-gray-100">
+              <span className="font-medium text-theme">
                 {entries.length.toLocaleString()}
               </span>{' '}
               entries
@@ -57,9 +57,8 @@ export function Toolbar() {
           onClick={refresh}
           disabled={isLoading}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
-                     text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800
-                     border border-gray-300 dark:border-gray-600 rounded-lg
-                     hover:bg-gray-50 dark:hover:bg-gray-700
+                     text-theme bg-theme border border-theme rounded-lg
+                     hover:bg-theme-secondary transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
@@ -72,9 +71,8 @@ export function Toolbar() {
             onClick={() => setShowExportMenu(!showExportMenu)}
             disabled={entries.length === 0}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
-                       text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800
-                       border border-gray-300 dark:border-gray-600 rounded-lg
-                       hover:bg-gray-50 dark:hover:bg-gray-700
+                       text-theme bg-theme border border-theme rounded-lg
+                       hover:bg-theme-secondary transition-colors
                        disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Download className="h-4 w-4" />
@@ -82,12 +80,11 @@ export function Toolbar() {
           </button>
 
           {showExportMenu && (
-            <div className="absolute right-0 mt-1 w-40 bg-white dark:bg-gray-800 border border-gray-200
-                            dark:border-gray-700 rounded-lg shadow-lg z-10">
+            <div className="absolute right-0 mt-1 w-40 bg-theme border border-theme rounded-lg shadow-lg z-10">
               <button
                 onClick={handleExportJson}
                 className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left
-                           hover:bg-gray-100 dark:hover:bg-gray-700 rounded-t-lg"
+                           hover:bg-theme-secondary rounded-t-lg transition-colors"
               >
                 <FileJson className="h-4 w-4" />
                 Export as JSON
@@ -95,7 +92,7 @@ export function Toolbar() {
               <button
                 onClick={handleExportText}
                 className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left
-                           hover:bg-gray-100 dark:hover:bg-gray-700 rounded-b-lg"
+                           hover:bg-theme-secondary rounded-b-lg transition-colors"
               >
                 <FileText className="h-4 w-4" />
                 Export as Text

@@ -1,5 +1,5 @@
 import { useFilterStore } from '../../stores/filterStore';
-import { PRIORITY_LABELS, PRIORITY_BG_COLORS, PRIORITY_COLORS } from '../../lib/types';
+import { PRIORITY_LABELS } from '../../lib/types';
 import clsx from 'clsx';
 
 const PRIORITIES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
@@ -14,6 +14,17 @@ const SHORT_LABELS: Record<number, string> = {
   5: 'note',
   6: 'info',
   7: 'dbg',
+};
+
+const PRIORITY_CSS_CLASSES: Record<number, string> = {
+  0: 'log-emerg priority-bg-emerg',
+  1: 'log-alert priority-bg-alert',
+  2: 'log-crit priority-bg-crit',
+  3: 'log-err priority-bg-err',
+  4: 'log-warning priority-bg-warning',
+  5: 'log-notice priority-bg-notice',
+  6: 'log-info priority-bg-info',
+  7: 'log-debug priority-bg-debug',
 };
 
 export function PriorityFilter() {
@@ -77,19 +88,19 @@ export function PriorityFilter() {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+        <label className="block text-sm font-medium text-theme">
           Priority Range
         </label>
         <div className="flex gap-2 text-xs">
           <button
             onClick={selectAll}
-            className="text-sky-600 hover:text-sky-700 dark:text-sky-400"
+            className="accent-theme hover:opacity-80 transition-opacity"
           >
             All
           </button>
           <button
             onClick={selectErrors}
-            className="text-sky-600 hover:text-sky-700 dark:text-sky-400"
+            className="accent-theme hover:opacity-80 transition-opacity"
           >
             Errors
           </button>
@@ -111,8 +122,8 @@ export function PriorityFilter() {
                 selected && isStart && 'rounded-l',
                 selected && isEnd && 'rounded-r',
                 selected
-                  ? [PRIORITY_BG_COLORS[priority], PRIORITY_COLORS[priority], 'border-current']
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-400 border-gray-300 dark:border-gray-600'
+                  ? [PRIORITY_CSS_CLASSES[priority], 'border-current']
+                  : 'bg-theme-secondary text-theme-secondary border-theme'
               )}
               title={`${PRIORITY_LABELS[priority]} (${priority})`}
             >
@@ -121,7 +132,7 @@ export function PriorityFilter() {
           );
         })}
       </div>
-      <p className="text-xs text-gray-500 dark:text-gray-400">
+      <p className="text-xs text-theme-secondary">
         Click to adjust range bounds
       </p>
     </div>

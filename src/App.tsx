@@ -2,33 +2,45 @@ import { useState } from 'react';
 import { FilterPanel } from './components/filters/FilterPanel';
 import { LogViewer } from './components/logs/LogViewer';
 import { Toolbar } from './components/toolbar/Toolbar';
-import { PanelLeftClose, PanelLeft, ScrollText } from 'lucide-react';
+import { SettingsPanel } from './components/settings/SettingsPanel';
+import { PanelLeftClose, PanelLeft, ScrollText, Settings } from 'lucide-react';
 import clsx from 'clsx';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-950">
+    <div className="h-screen flex flex-col bg-theme-secondary">
       {/* Header */}
-      <header className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-1.5 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300
-                     hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
-        >
-          {sidebarOpen ? (
-            <PanelLeftClose className="h-5 w-5" />
-          ) : (
-            <PanelLeft className="h-5 w-5" />
-          )}
-        </button>
-        <div className="flex items-center gap-2">
-          <ScrollText className="h-6 w-6 text-sky-600" />
-          <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-            Journal Reader
-          </h1>
+      <header className="flex items-center justify-between px-4 py-3 bg-theme border-b border-theme">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-1.5 text-theme-secondary hover:text-theme
+                       hover:bg-theme-secondary rounded transition-colors"
+          >
+            {sidebarOpen ? (
+              <PanelLeftClose className="h-5 w-5" />
+            ) : (
+              <PanelLeft className="h-5 w-5" />
+            )}
+          </button>
+          <div className="flex items-center gap-2">
+            <ScrollText className="h-6 w-6 accent-theme" />
+            <h1 className="text-lg font-semibold text-theme">
+              Journal Reader
+            </h1>
+          </div>
         </div>
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="p-1.5 text-theme-secondary hover:text-theme
+                     hover:bg-theme-secondary rounded transition-colors"
+          title="Settings"
+        >
+          <Settings className="h-5 w-5" />
+        </button>
       </header>
 
       {/* Main content */}
@@ -44,11 +56,14 @@ function App() {
         </aside>
 
         {/* Main area */}
-        <main className="flex-1 flex flex-col min-w-0 bg-white dark:bg-gray-900">
+        <main className="flex-1 flex flex-col min-w-0 bg-theme">
           <Toolbar />
           <LogViewer />
         </main>
       </div>
+
+      {/* Settings Panel */}
+      <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

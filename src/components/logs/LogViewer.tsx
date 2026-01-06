@@ -32,18 +32,18 @@ export function LogViewer() {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-8">
-          <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+          <AlertCircle className="h-12 w-12 mx-auto mb-4" style={{ color: 'var(--color-priority-error)' }} />
+          <h3 className="text-lg font-medium text-theme mb-2">
             Error loading logs
           </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md">
+          <p className="text-sm text-theme-secondary max-w-md">
             {error}
           </p>
           {error.includes('Permission') && (
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">
-              Try adding your user to the <code className="px-1 bg-gray-100 dark:bg-gray-800 rounded">adm</code> group:
+            <p className="text-sm text-theme-secondary mt-4">
+              Try adding your user to the <code className="px-1 bg-theme-secondary rounded">adm</code> group:
               <br />
-              <code className="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded block mt-2">
+              <code className="text-xs px-2 py-1 bg-theme-secondary rounded block mt-2">
                 sudo usermod -aG adm $USER
               </code>
             </p>
@@ -57,11 +57,11 @@ export function LogViewer() {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-8">
-          <FileSearch className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+          <FileSearch className="h-12 w-12 text-theme-secondary mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-theme mb-2">
             No logs found
           </h3>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="text-sm text-theme-secondary">
             Try adjusting your filters or time range
           </p>
         </div>
@@ -72,7 +72,7 @@ export function LogViewer() {
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500">
+      <div className="flex items-center gap-2 px-3 py-2 bg-theme-secondary border-b border-theme text-xs font-medium text-theme-secondary">
         <div className="w-6"></div>
         <div className="w-28">Time</div>
         <div className="w-16 text-center">Level</div>
@@ -118,8 +118,8 @@ export function LogViewer() {
         {/* Loading indicator */}
         {isLoading && (
           <div className="flex items-center justify-center py-4">
-            <Loader2 className="h-5 w-5 text-sky-500 animate-spin" />
-            <span className="ml-2 text-sm text-gray-500">Loading logs...</span>
+            <Loader2 className="h-5 w-5 accent-theme animate-spin" />
+            <span className="ml-2 text-sm text-theme-secondary">Loading logs...</span>
           </div>
         )}
 
@@ -128,7 +128,7 @@ export function LogViewer() {
           <div className="flex items-center justify-center py-4">
             <button
               onClick={loadMore}
-              className="text-sm text-sky-600 hover:text-sky-700 dark:text-sky-400"
+              className="text-sm accent-theme hover:opacity-80"
             >
               Load more...
             </button>
