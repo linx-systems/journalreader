@@ -35,7 +35,7 @@ export function SearchBar() {
           type="text"
           value={localValue}
           onChange={(e) => handleChange(e.target.value)}
-          placeholder="Search messages (regex supported)"
+          placeholder="Search (regex)..."
           className="w-full pl-10 pr-10 py-2 border border-theme rounded-lg
                      bg-theme text-theme
                      focus:ring-2 focus:outline-none
