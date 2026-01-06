@@ -25,8 +25,8 @@ pub struct JournalEntry {
 pub struct JournalFilter {
     #[serde(default)]
     pub units: Vec<String>,
-    pub priority_min: Option<u8>,
-    pub priority_max: Option<u8>,
+    #[serde(default)]
+    pub priorities: Vec<u8>,
     pub since: Option<String>,
     pub until: Option<String>,
     pub grep_pattern: Option<String>,

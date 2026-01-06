@@ -18,8 +18,7 @@ export interface JournalEntry {
 
 export interface JournalFilter {
   units: string[];
-  priorityMin?: number;
-  priorityMax?: number;
+  priorities?: number[];
   since?: string;
   until?: string;
   grepPattern?: string;

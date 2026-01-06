@@ -38,21 +38,39 @@ export function TimeRangePicker() {
           Time Range
         </label>
       </div>
-      <div className="flex flex-wrap gap-1">
-        {TIME_PRESETS.map((preset) => (
-          <button
-            key={preset.label}
-            onClick={() => handlePresetClick(preset)}
-            className={clsx(
-              'px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors',
-              isPresetSelected(preset)
-                ? 'selection-theme accent-theme border-current'
-                : 'bg-theme text-theme-secondary border-theme hover:bg-theme-secondary'
-            )}
-          >
-            {preset.label}
-          </button>
-        ))}
+      <div className="flex flex-col gap-1">
+        <div className="flex gap-1">
+          {TIME_PRESETS.slice(0, 3).map((preset) => (
+            <button
+              key={preset.label}
+              onClick={() => handlePresetClick(preset)}
+              className={clsx(
+                'flex-1 py-1 text-xs font-medium rounded transition-colors',
+                isPresetSelected(preset)
+                  ? 'selection-theme accent-theme ring-1 ring-current'
+                  : 'bg-theme-secondary text-theme-secondary'
+              )}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1">
+          {TIME_PRESETS.slice(3).map((preset) => (
+            <button
+              key={preset.label}
+              onClick={() => handlePresetClick(preset)}
+              className={clsx(
+                'flex-1 py-1 text-xs font-medium rounded transition-colors',
+                isPresetSelected(preset)
+                  ? 'selection-theme accent-theme ring-1 ring-current'
+                  : 'bg-theme-secondary text-theme-secondary'
+              )}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

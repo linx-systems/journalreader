@@ -17,19 +17,9 @@ impl JournalReader {
             cmd.arg("-u").arg(unit);
         }
 
-        // Priority range
-        if let Some(min) = filter.priority_min {
-            if let Some(max) = filter.priority_max {
-                if min == max {
-                    cmd.arg("-p").arg(min.to_string());
-                } else {
-                    cmd.arg("-p").arg(format!("{}..{}", min, max));
-                }
-            } else {
-                cmd.arg("-p").arg(format!("{}..7", min));
-            }
-        } else if let Some(max) = filter.priority_max {
-            cmd.arg("-p").arg(format!("0..{}", max));
+        // Priority filter - add each selected priority
+        for priority in &filter.priorities {
+            cmd.arg("-p").arg(priority.to_string());
         }
 
         // Time filters
@@ -140,12 +130,8 @@ impl JournalReader {
             cmd.arg("-u").arg(unit);
         }
 
-        if let Some(min) = filter.priority_min {
-            if let Some(max) = filter.priority_max {
-                cmd.arg("-p").arg(format!("{}..{}", min, max));
-            } else {
-                cmd.arg("-p").arg(format!("{}..7", min));
-            }
+        for priority in &filter.priorities {
+            cmd.arg("-p").arg(priority.to_string());
         }
 
         if let Some(since) = &filter.since {
