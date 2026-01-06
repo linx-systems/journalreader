@@ -1,10 +1,16 @@
-import { RefreshCw, Download, FileJson, FileText } from 'lucide-react';
+import { RefreshCw, Download, FileJson, FileText, ArrowUp, ArrowDown } from 'lucide-react';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
+import { useFilterStore } from '../../stores/filterStore';
 import { useState } from 'react';
 
 export function Toolbar() {
   const { entries, isLoading, refresh } = useJournalLogs();
+  const { filter, setFilter } = useFilterStore();
   const [showExportMenu, setShowExportMenu] = useState(false);
+
+  const toggleSortOrder = () => {
+    setFilter({ reverse: !filter.reverse });
+  };
 
   const handleExportJson = () => {
     const data = JSON.stringify(entries, null, 2);
@@ -63,6 +69,24 @@ export function Toolbar() {
         >
           <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
           Refresh
+        </button>
+
+        {/* Sort button */}
+        <button
+          onClick={toggleSortOrder}
+          disabled={isLoading}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
+                     text-theme bg-theme border border-theme rounded-lg
+                     hover:bg-theme-secondary transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          title={filter.reverse ? 'Sorted: Newest first' : 'Sorted: Oldest first'}
+        >
+          {filter.reverse ? (
+            <ArrowDown className="h-4 w-4" />
+          ) : (
+            <ArrowUp className="h-4 w-4" />
+          )}
+          {filter.reverse ? 'Newest' : 'Oldest'}
         </button>
 
         {/* Export dropdown */}
