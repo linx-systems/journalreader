@@ -5,3 +5,4 @@ export { TopServices } from './TopServices';
 export { ErrorRateLine } from './ErrorRateLine';
 export { GranularitySelector } from './GranularitySelector';
 export { StatisticsExport } from './StatisticsExport';
+export { Toast } from './Toast';

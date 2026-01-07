@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useStatistics } from '../../hooks/useStatistics';
 import { useFilterStore } from '../../stores/filterStore';
@@ -9,10 +9,12 @@ import { PriorityDistribution } from './PriorityDistribution';
 import { TopServices } from './TopServices';
 import { ErrorRateLine } from './ErrorRateLine';
 import { GranularitySelector } from './GranularitySelector';
-import { StatisticsExport } from './StatisticsExport';
+import { StatisticsExport, type ExportResult } from './StatisticsExport';
+import { Toast } from './Toast';
 
 export function StatisticsView() {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const chartsRef = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState<ExportResult | null>(null);
   const { statistics, isLoading, error, refresh } = useStatistics();
   const { filter, setFilter } = useFilterStore();
   const { granularity, setViewMode } = useStatisticsStore();
@@ -38,6 +40,10 @@ export function StatisticsView() {
   const handleServiceClick = (service: string) => {
     setFilter({ units: [service], excludedUnits: [] });
     setViewMode('logs');
+  };
+
+  const handleExportComplete = (result: ExportResult) => {
+    setToast(result);
   };
 
   if (error) {
@@ -114,13 +120,17 @@ export function StatisticsView() {
         </div>
         <div className="flex items-center gap-4">
           <GranularitySelector />
-          <StatisticsExport statistics={statistics} containerRef={containerRef} />
+          <StatisticsExport
+            statistics={statistics}
+            chartsRef={chartsRef}
+            onExportComplete={handleExportComplete}
+          />
         </div>
       </div>
 
       {/* Charts Grid */}
-      <div ref={containerRef} className="flex-1 overflow-auto p-4">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
+      <div className="flex-1 overflow-auto p-4">
+        <div ref={chartsRef} className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* Timeline - full width on top */}
           <div className="lg:col-span-2 bg-theme rounded-lg p-4 border border-theme h-64">
             <TimelineHistogram data={statistics.timeseries} onBarClick={handleTimeRangeClick} />
@@ -145,6 +155,15 @@ export function StatisticsView() {
           </div>
         </div>
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }

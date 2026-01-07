@@ -1,18 +1,22 @@
-import { useState } from 'react';
-import { Download, Image, Check, AlertCircle } from 'lucide-react';
+import { Download, Image } from 'lucide-react';
 import type { JournalStatistics } from '../../lib/types';
+
+export interface ExportResult {
+  type: 'success' | 'error';
+  message: string;
+}
 
 interface StatisticsExportProps {
   statistics: JournalStatistics;
-  containerRef: React.RefObject<HTMLDivElement | null>;
+  chartsRef: React.RefObject<HTMLDivElement | null>;
+  onExportComplete?: (result: ExportResult) => void;
 }
 
-export function StatisticsExport({ statistics, containerRef }: StatisticsExportProps) {
-  const [exportStatus, setExportStatus] = useState<{
-    type: 'success' | 'error';
-    message: string;
-  } | null>(null);
-
+export function StatisticsExport({
+  statistics,
+  chartsRef,
+  onExportComplete,
+}: StatisticsExportProps) {
   const exportCSV = () => {
     const lines: string[] = [
       '# Journal Statistics Export',
@@ -36,31 +40,52 @@ export function StatisticsExport({ statistics, containerRef }: StatisticsExportP
       ...statistics.topServices.map((s) => `"${s.service}",${s.count}`),
     ];
 
+    const filename = `journal-statistics-${new Date().toISOString().slice(0, 10)}.csv`;
     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `journal-statistics-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+
+    onExportComplete?.({ type: 'success', message: `Saved "${filename}" to Downloads` });
   };
 
   const exportImage = async () => {
-    if (!containerRef.current) return;
+    if (!chartsRef.current) return;
+
+    const target = chartsRef.current;
+    const scrollParent = target.parentElement;
+    const originalOverflow = scrollParent?.style.overflow;
+    const originalHeight = scrollParent?.style.height;
 
     try {
-      setExportStatus({ type: 'success', message: 'Exporting...' });
+      // Temporarily modify layout for full capture
+      if (scrollParent) {
+        scrollParent.style.overflow = 'visible';
+        scrollParent.style.height = 'auto';
+      }
+
       const html2canvas = (await import('html2canvas')).default;
 
-      // Capture full scrollable content by specifying dimensions
-      const canvas = await html2canvas(containerRef.current, {
-        backgroundColor: null,
+      // Get computed background color for the theme
+      const bgColor = getComputedStyle(document.documentElement)
+        .getPropertyValue('--color-bg-secondary')
+        .trim() || '#1f2937';
+
+      const canvas = await html2canvas(target, {
+        backgroundColor: bgColor,
         scale: 2,
-        windowWidth: containerRef.current.scrollWidth,
-        windowHeight: containerRef.current.scrollHeight,
-        width: containerRef.current.scrollWidth,
-        height: containerRef.current.scrollHeight,
+        useCORS: true,
+        logging: false,
       });
+
+      // Restore original layout
+      if (scrollParent) {
+        scrollParent.style.overflow = originalOverflow || '';
+        scrollParent.style.height = originalHeight || '';
+      }
 
       const filename = `journal-statistics-${new Date().toISOString().slice(0, 10)}.png`;
       const url = canvas.toDataURL('image/png');
@@ -69,12 +94,15 @@ export function StatisticsExport({ statistics, containerRef }: StatisticsExportP
       a.download = filename;
       a.click();
 
-      setExportStatus({ type: 'success', message: `Saved "${filename}" to Downloads` });
-      setTimeout(() => setExportStatus(null), 4000);
+      onExportComplete?.({ type: 'success', message: `Saved "${filename}" to Downloads` });
     } catch (err) {
+      // Restore layout on error
+      if (scrollParent) {
+        scrollParent.style.overflow = originalOverflow || '';
+        scrollParent.style.height = originalHeight || '';
+      }
       console.error('Failed to export image:', err);
-      setExportStatus({ type: 'error', message: 'Export failed' });
-      setTimeout(() => setExportStatus(null), 4000);
+      onExportComplete?.({ type: 'error', message: 'Export failed' });
     }
   };
 
@@ -100,24 +128,6 @@ export function StatisticsExport({ statistics, containerRef }: StatisticsExportP
         <Image className="h-4 w-4" />
         PNG
       </button>
-
-      {/* Export status notification */}
-      {exportStatus && (
-        <div
-          className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg ${
-            exportStatus.type === 'success'
-              ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-              : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-          }`}
-        >
-          {exportStatus.type === 'success' ? (
-            <Check className="h-4 w-4" />
-          ) : (
-            <AlertCircle className="h-4 w-4" />
-          )}
-          {exportStatus.message}
-        </div>
-      )}
     </div>
   );
 }
