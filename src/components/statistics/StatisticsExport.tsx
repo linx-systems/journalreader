@@ -1,5 +1,6 @@
 import { Download, Image } from 'lucide-react';
 import type { JournalStatistics } from '../../lib/types';
+import { logError } from '../../lib/errorLogger';
 
 export interface ExportResult {
   type: 'success' | 'error';
@@ -101,7 +102,7 @@ export function StatisticsExport({
         scrollParent.style.overflow = originalOverflow || '';
         scrollParent.style.height = originalHeight || '';
       }
-      console.error('Failed to export image:', err);
+      logError(err, { component: 'StatisticsExport', action: 'exportImage' });
       onExportComplete?.({ type: 'error', message: 'Export failed' });
     }
   };

@@ -8,6 +8,7 @@ import { useFilterStore } from '../../stores/filterStore';
 import { useBookmarkStore } from '../../stores/bookmarkStore';
 import { BookmarkList, SaveFilterDialog } from '../bookmarks';
 import { RotateCcw, Star } from 'lucide-react';
+import { logError } from '../../lib/errorLogger';
 
 export function FilterPanel() {
   const { filter, resetFilter } = useFilterStore();
@@ -50,7 +51,7 @@ export function FilterPanel() {
         importBookmarks(data);
       }
     } catch (err) {
-      console.error('Failed to import bookmarks:', err);
+      logError(err, { component: 'FilterPanel', action: 'importBookmarks' });
     }
 
     // Reset file input

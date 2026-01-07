@@ -8,6 +8,7 @@ import {
   startRemoteFollow,
   stopRemoteFollow,
 } from '../lib/tauri';
+import { logError } from '../lib/errorLogger';
 import type { FollowEvent, FollowErrorEvent } from '../lib/types';
 
 // Helper to create a stable key from filter for comparison
@@ -123,7 +124,7 @@ export function useFollowMode() {
         stopRemoteFollow().catch(() => {}),
       ]);
     } catch (err) {
-      console.error('Failed to stop follow:', err);
+      logError(err, { component: 'useFollowMode', action: 'stopFollow' });
     }
     setFollowing(false);
     setFollowPaused(false);
@@ -158,8 +159,12 @@ export function useFollowMode() {
     return () => {
       // Only cleanup if we're actually following
       if (isFollowing) {
-        stopFollow().catch(console.error);
-        stopRemoteFollow().catch(console.error);
+        stopFollow().catch((err) =>
+          logError(err, { component: 'useFollowMode', action: 'cleanup:stopFollow' })
+        );
+        stopRemoteFollow().catch((err) =>
+          logError(err, { component: 'useFollowMode', action: 'cleanup:stopRemoteFollow' })
+        );
         cleanupListeners();
       }
     };
