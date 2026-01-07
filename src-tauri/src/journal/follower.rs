@@ -59,9 +59,11 @@ impl JournalFollower {
             cmd.arg("-u").arg(unit);
         }
 
-        // Priority filter
-        for priority in &filter.priorities {
-            cmd.arg("-p").arg(priority.to_string());
+        // Priority filter - use range syntax MIN..MAX
+        if !filter.priorities.is_empty() {
+            let min = filter.priorities.iter().min().unwrap();
+            let max = filter.priorities.iter().max().unwrap();
+            cmd.arg("-p").arg(format!("{}..{}", min, max));
         }
 
         // Boot filter - for follow mode, default to current boot
@@ -105,6 +107,7 @@ impl JournalFollower {
 
         let running = self.running.clone();
         let restarting = self.restarting.clone();
+        let excluded_units = filter.excluded_units.clone();
 
         // Spawn a thread to read the stream
         std::thread::spawn(move || {
@@ -126,6 +129,14 @@ impl JournalFollower {
 
                         match parse_entry(&line) {
                             Ok(entry) => {
+                                // Filter out excluded units (journalctl doesn't support this natively)
+                                if !excluded_units.is_empty() {
+                                    if let Some(ref unit) = entry.systemd_unit {
+                                        if excluded_units.contains(unit) {
+                                            continue;
+                                        }
+                                    }
+                                }
                                 buffer.push(entry);
 
                                 // Emit buffered entries periodically

@@ -17,9 +17,12 @@ impl JournalReader {
             cmd.arg("-u").arg(unit);
         }
 
-        // Priority filter - add each selected priority
-        for priority in &filter.priorities {
-            cmd.arg("-p").arg(priority.to_string());
+        // Priority filter - use range syntax MIN..MAX
+        // Without range, -p 3 would show 0-3, not just 3
+        if !filter.priorities.is_empty() {
+            let min = filter.priorities.iter().min().unwrap();
+            let max = filter.priorities.iter().max().unwrap();
+            cmd.arg("-p").arg(format!("{}..{}", min, max));
         }
 
         // Time filters
@@ -145,8 +148,10 @@ impl JournalReader {
             cmd.arg("-u").arg(unit);
         }
 
-        for priority in &filter.priorities {
-            cmd.arg("-p").arg(priority.to_string());
+        if !filter.priorities.is_empty() {
+            let min = filter.priorities.iter().min().unwrap();
+            let max = filter.priorities.iter().max().unwrap();
+            cmd.arg("-p").arg(format!("{}..{}", min, max));
         }
 
         if let Some(since) = &filter.since {

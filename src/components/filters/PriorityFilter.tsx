@@ -1,144 +1,216 @@
+import { useState, useEffect, useMemo } from 'react';
 import { useFilterStore } from '../../stores/filterStore';
 import { PRIORITY_LABELS } from '../../lib/types';
 import clsx from 'clsx';
 
-const PRIORITIES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
-
-// Short labels to fit all priorities in view
-const SHORT_LABELS: Record<number, string> = {
-  0: 'emg',
-  1: 'alrt',
-  2: 'crit',
-  3: 'err',
-  4: 'warn',
-  5: 'note',
-  6: 'info',
-  7: 'dbg',
-};
-
-const PRIORITY_CSS_CLASSES: Record<number, string> = {
-  0: 'log-emerg priority-bg-emerg',
-  1: 'log-alert priority-bg-alert',
-  2: 'log-crit priority-bg-crit',
-  3: 'log-err priority-bg-err',
-  4: 'log-warning priority-bg-warning',
-  5: 'log-notice priority-bg-notice',
-  6: 'log-info priority-bg-info',
-  7: 'log-debug priority-bg-debug',
+const PRIORITY_COLORS: Record<number, string> = {
+  0: 'bg-red-600',
+  1: 'bg-orange-500',
+  2: 'bg-amber-500',
+  3: 'bg-yellow-500',
+  4: 'bg-lime-500',
+  5: 'bg-green-500',
+  6: 'bg-sky-500',
+  7: 'bg-gray-400',
 };
 
 export function PriorityFilter() {
   const { filter, setFilter } = useFilterStore();
 
-  // If no priorities set, all are selected (empty array means all)
-  const selectedPriorities = filter.priorities ?? [];
-  const allSelected = selectedPriorities.length === 0;
+  // Derive min/max from current filter priorities
+  const { initialMin, initialMax } = useMemo(() => {
+    const priorities = filter.priorities ?? [];
+    if (priorities.length === 0) {
+      return { initialMin: 0, initialMax: 7 };
+    }
+    return {
+      initialMin: Math.min(...priorities),
+      initialMax: Math.max(...priorities),
+    };
+  }, [filter.priorities]);
 
-  const isSelected = (priority: number) => {
-    return allSelected || selectedPriorities.includes(priority);
-  };
+  const [minPriority, setMinPriority] = useState(initialMin);
+  const [maxPriority, setMaxPriority] = useState(initialMax);
 
-  const handleToggle = (priority: number) => {
-    if (allSelected) {
-      // If all are selected, deselect this one (select all others)
-      const newPriorities = PRIORITIES.filter(p => p !== priority);
-      setFilter({ priorities: [...newPriorities] });
-    } else if (isSelected(priority)) {
-      // Deselect this priority
-      const newPriorities = selectedPriorities.filter(p => p !== priority);
-      // If none would be selected, select all (empty array)
-      if (newPriorities.length === 0) {
-        setFilter({ priorities: undefined });
-      } else {
-        setFilter({ priorities: newPriorities });
-      }
+  // Sync local state when filter changes externally
+  useEffect(() => {
+    setMinPriority(initialMin);
+    setMaxPriority(initialMax);
+  }, [initialMin, initialMax]);
+
+  const updateFilter = (min: number, max: number) => {
+    if (min === 0 && max === 7) {
+      setFilter({ priorities: undefined });
     } else {
-      // Select this priority
-      const newPriorities = [...selectedPriorities, priority].sort((a, b) => a - b);
-      // If all would be selected, use empty array
-      if (newPriorities.length === 8) {
-        setFilter({ priorities: undefined });
-      } else {
-        setFilter({ priorities: newPriorities });
-      }
+      const priorities = Array.from(
+        { length: max - min + 1 },
+        (_, i) => min + i
+      );
+      setFilter({ priorities });
     }
   };
 
+  const handleMinChange = (value: number) => {
+    const newMin = Math.min(value, maxPriority);
+    setMinPriority(newMin);
+    updateFilter(newMin, maxPriority);
+  };
+
+  const handleMaxChange = (value: number) => {
+    const newMax = Math.max(value, minPriority);
+    setMaxPriority(newMax);
+    updateFilter(minPriority, newMax);
+  };
+
   const selectAll = () => {
+    setMinPriority(0);
+    setMaxPriority(7);
     setFilter({ priorities: undefined });
   };
 
   const selectErrors = () => {
+    setMinPriority(0);
+    setMaxPriority(3);
     setFilter({ priorities: [0, 1, 2, 3] });
   };
 
+  const isAllSelected = minPriority === 0 && maxPriority === 7;
+
+  // Calculate the selected range position for visual track
+  const rangeStart = (minPriority / 7) * 100;
+  const rangeEnd = (maxPriority / 7) * 100;
+
+  // Get range label
+  const rangeLabel = isAllSelected
+    ? 'All priorities'
+    : minPriority === maxPriority
+      ? PRIORITY_LABELS[minPriority]
+      : `${PRIORITY_LABELS[minPriority]} - ${PRIORITY_LABELS[maxPriority]}`;
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <label className="block text-sm font-medium text-theme">
-          Priority
+          Priority Range
         </label>
         <div className="flex gap-2 text-xs">
           <button
             onClick={selectAll}
-            className="accent-theme hover:opacity-80 transition-opacity"
+            className={clsx(
+              'px-2 py-0.5 rounded transition-colors',
+              isAllSelected
+                ? 'bg-theme-secondary text-theme'
+                : 'accent-theme hover:opacity-80'
+            )}
           >
             All
           </button>
           <button
             onClick={selectErrors}
-            className="accent-theme hover:opacity-80 transition-opacity"
+            className={clsx(
+              'px-2 py-0.5 rounded transition-colors',
+              minPriority === 0 && maxPriority === 3
+                ? 'bg-theme-secondary text-theme'
+                : 'accent-theme hover:opacity-80'
+            )}
           >
             Errors
           </button>
         </div>
       </div>
-      <div className="flex flex-col gap-1">
-        <div className="flex gap-1">
-          {PRIORITIES.slice(0, 4).map((priority) => {
-            const selected = isSelected(priority);
 
-            return (
-              <button
-                key={priority}
-                onClick={() => handleToggle(priority)}
-                className={clsx(
-                  'flex-1 py-1 text-xs font-medium rounded transition-colors',
-                  selected
-                    ? [PRIORITY_CSS_CLASSES[priority], 'ring-1 ring-current']
-                    : 'bg-theme-secondary text-theme-secondary'
-                )}
-                title={`${PRIORITY_LABELS[priority]} (${priority})`}
-              >
-                {SHORT_LABELS[priority]}
-              </button>
-            );
-          })}
+      {/* Range slider track with color segments */}
+      <div className="relative pt-1">
+        {/* Background track with priority colors */}
+        <div className="flex h-2 rounded-full overflow-hidden">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((p) => (
+            <div
+              key={p}
+              className={clsx(
+                'flex-1 transition-opacity',
+                PRIORITY_COLORS[p],
+                p >= minPriority && p <= maxPriority ? 'opacity-100' : 'opacity-20'
+              )}
+            />
+          ))}
         </div>
-        <div className="flex gap-1">
-          {PRIORITIES.slice(4).map((priority) => {
-            const selected = isSelected(priority);
 
-            return (
-              <button
-                key={priority}
-                onClick={() => handleToggle(priority)}
-                className={clsx(
-                  'flex-1 py-1 text-xs font-medium rounded transition-colors',
-                  selected
-                    ? [PRIORITY_CSS_CLASSES[priority], 'ring-1 ring-current']
-                    : 'bg-theme-secondary text-theme-secondary'
-                )}
-                title={`${PRIORITY_LABELS[priority]} (${priority}}`}
-              >
-                {SHORT_LABELS[priority]}
-              </button>
-            );
-          })}
+        {/* Dual range inputs overlaid */}
+        <div className="relative mt-1">
+          <input
+            type="range"
+            min={0}
+            max={7}
+            value={minPriority}
+            onChange={(e) => handleMinChange(parseInt(e.target.value))}
+            className="absolute w-full h-2 appearance-none bg-transparent pointer-events-none
+              [&::-webkit-slider-thumb]:pointer-events-auto
+              [&::-webkit-slider-thumb]:appearance-none
+              [&::-webkit-slider-thumb]:w-4
+              [&::-webkit-slider-thumb]:h-4
+              [&::-webkit-slider-thumb]:rounded-full
+              [&::-webkit-slider-thumb]:bg-white
+              [&::-webkit-slider-thumb]:border-2
+              [&::-webkit-slider-thumb]:border-gray-400
+              [&::-webkit-slider-thumb]:shadow
+              [&::-webkit-slider-thumb]:cursor-pointer
+              [&::-webkit-slider-thumb]:hover:border-gray-600
+              [&::-moz-range-thumb]:pointer-events-auto
+              [&::-moz-range-thumb]:appearance-none
+              [&::-moz-range-thumb]:w-4
+              [&::-moz-range-thumb]:h-4
+              [&::-moz-range-thumb]:rounded-full
+              [&::-moz-range-thumb]:bg-white
+              [&::-moz-range-thumb]:border-2
+              [&::-moz-range-thumb]:border-gray-400
+              [&::-moz-range-thumb]:shadow
+              [&::-moz-range-thumb]:cursor-pointer
+              [&::-moz-range-thumb]:hover:border-gray-600"
+            style={{ zIndex: minPriority > 5 ? 5 : 3 }}
+          />
+          <input
+            type="range"
+            min={0}
+            max={7}
+            value={maxPriority}
+            onChange={(e) => handleMaxChange(parseInt(e.target.value))}
+            className="absolute w-full h-2 appearance-none bg-transparent pointer-events-none
+              [&::-webkit-slider-thumb]:pointer-events-auto
+              [&::-webkit-slider-thumb]:appearance-none
+              [&::-webkit-slider-thumb]:w-4
+              [&::-webkit-slider-thumb]:h-4
+              [&::-webkit-slider-thumb]:rounded-full
+              [&::-webkit-slider-thumb]:bg-white
+              [&::-webkit-slider-thumb]:border-2
+              [&::-webkit-slider-thumb]:border-gray-400
+              [&::-webkit-slider-thumb]:shadow
+              [&::-webkit-slider-thumb]:cursor-pointer
+              [&::-webkit-slider-thumb]:hover:border-gray-600
+              [&::-moz-range-thumb]:pointer-events-auto
+              [&::-moz-range-thumb]:appearance-none
+              [&::-moz-range-thumb]:w-4
+              [&::-moz-range-thumb]:h-4
+              [&::-moz-range-thumb]:rounded-full
+              [&::-moz-range-thumb]:bg-white
+              [&::-moz-range-thumb]:border-2
+              [&::-moz-range-thumb]:border-gray-400
+              [&::-moz-range-thumb]:shadow
+              [&::-moz-range-thumb]:cursor-pointer
+              [&::-moz-range-thumb]:hover:border-gray-600"
+            style={{ zIndex: 4 }}
+          />
+        </div>
+
+        {/* Priority labels below */}
+        <div className="flex justify-between mt-1 text-[10px] text-theme-secondary">
+          <span>emerg</span>
+          <span>debug</span>
         </div>
       </div>
-      <p className="text-xs text-theme-secondary">
-        Click to toggle each priority
+
+      {/* Current selection display */}
+      <p className="text-xs text-theme-secondary text-center">
+        Showing: <span className="text-theme font-medium">{rangeLabel}</span>
       </p>
     </div>
   );
