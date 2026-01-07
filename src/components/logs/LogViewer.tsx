@@ -15,26 +15,78 @@ export function LogViewer() {
   const [userScrolled, setUserScrolled] = useState(false);
   const prevEntriesLengthRef = useRef(entries.length);
   const isScrollingRef = useRef(false);
+  const anchorRef = useRef<{ cursor: string; offset: number } | null>(null);
+  const lastExpandedCursorRef = useRef<string | null>(null);
+  const entriesRef = useRef(entries);
+  const entriesKeyRef = useRef(entries);
+  entriesKeyRef.current = entries;
+
+  const getItemKey = useCallback((index: number) => {
+    return entriesKeyRef.current[index]?.cursor ?? index;
+  }, []);
 
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => parentRef.current,
+    getItemKey,
     estimateSize: () => 48,
     overscan: 10,
     measureElement: (element) => element.getBoundingClientRect().height,
   });
 
+  const updateAnchor = useCallback((preferredCursor?: string) => {
+    if (!parentRef.current) return;
+    const parent = parentRef.current;
+    const preferred = preferredCursor ?? anchorRef.current?.cursor;
+    let cursor = preferred;
+    let anchorEl: HTMLElement | null = null;
+
+    if (cursor) {
+      anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
+    }
+
+    if (!anchorEl) {
+      const virtualItems = rowVirtualizer.getVirtualItems();
+      if (virtualItems.length === 0) return;
+      const scrollTop = parent.scrollTop;
+      const visibleItem =
+        virtualItems.find((item) => item.start <= scrollTop && item.start + item.size > scrollTop) ??
+        virtualItems[0];
+      cursor = entries[visibleItem.index]?.cursor ?? null;
+      if (!cursor) return;
+      anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
+    }
+
+    if (!anchorEl || !cursor) return;
+    const parentRect = parent.getBoundingClientRect();
+    const anchorRect = anchorEl.getBoundingClientRect();
+    anchorRef.current = {
+      cursor,
+      offset: anchorRect.top - parentRect.top,
+    };
+  }, [entries, rowVirtualizer]);
+
   const handleToggleExpand = useCallback((cursor: string) => {
+    updateAnchor(cursor);
     setExpandedRows((prev) => {
       const next = new Set(prev);
       if (next.has(cursor)) {
         next.delete(cursor);
       } else {
         next.add(cursor);
+        lastExpandedCursorRef.current = cursor;
+      }
+      if (isFollowing) {
+        if (next.size > 0) {
+          pause();
+        } else if (!userScrolled) {
+          resume();
+          lastExpandedCursorRef.current = null;
+        }
       }
       return next;
     });
-  }, []);
+  }, [isFollowing, pause, resume, updateAnchor, userScrolled]);
 
   // Scroll to top (where newest entries appear in follow mode)
   const scrollToTop = useCallback(() => {
@@ -73,7 +125,24 @@ export function LogViewer() {
         loadMore();
       }
     }
-  }, [isFollowing, hasMore, isLoading, loadMore, pause, resume, userScrolled]);
+
+    if (isFollowing && (isFollowPaused || expandedRows.size > 0)) {
+      updateAnchor(lastExpandedCursorRef.current ?? undefined);
+    } else if (!isFollowing || (!isFollowPaused && expandedRows.size === 0)) {
+      anchorRef.current = null;
+    }
+  }, [
+    isFollowing,
+    isFollowPaused,
+    expandedRows.size,
+    hasMore,
+    isLoading,
+    loadMore,
+    pause,
+    resume,
+    updateAnchor,
+    userScrolled,
+  ]);
 
   // Handle new entries in follow mode - reset virtualizer measurements and scroll to top
   useEffect(() => {
@@ -81,17 +150,27 @@ export function LogViewer() {
     const newLength = entries.length;
 
     if (isFollowing && newLength > prevLength) {
-      // New entries were prepended - measurements are now stale because indices shifted
-      // Reset the virtualizer's measurement cache
-      rowVirtualizer.measure();
-
-      // Scroll to top if not paused
-      if (!isFollowPaused) {
+      // Scroll to top if not paused and no rows are expanded
+      if (!isFollowPaused && expandedRows.size === 0) {
         scrollToTop();
+        anchorRef.current = null;
+      } else if (parentRef.current && anchorRef.current) {
+        const parent = parentRef.current;
+        const anchor = anchorRef.current;
+        const anchorEl = parent.querySelector(`[data-cursor="${anchor.cursor}"]`);
+        if (anchorEl) {
+          const parentRect = parent.getBoundingClientRect();
+          const anchorRect = anchorEl.getBoundingClientRect();
+          const newOffset = anchorRect.top - parentRect.top;
+          const delta = newOffset - anchor.offset;
+          if (delta !== 0) {
+            parent.scrollTop += delta;
+          }
+        }
       }
     }
     prevEntriesLengthRef.current = newLength;
-  }, [entries.length, isFollowing, isFollowPaused, scrollToTop, rowVirtualizer]);
+  }, [entries, entries.length, expandedRows.size, isFollowing, isFollowPaused, scrollToTop]);
 
   // Reset user scrolled state and expanded rows when follow mode stops
   useEffect(() => {
@@ -102,7 +181,6 @@ export function LogViewer() {
   }, [isFollowing]);
 
   // Clear expanded rows when entries change significantly (filter change)
-  const entriesRef = useRef(entries);
   useEffect(() => {
     // If entries array reference changed and we're not in follow mode, clear expanded rows
     if (entriesRef.current !== entries && !isFollowing) {
@@ -203,8 +281,9 @@ export function LogViewer() {
             const isExpanded = expandedRows.has(entry.cursor);
             return (
               <div
-                key={`${entry.cursor}-${isExpanded ? 'expanded' : 'collapsed'}`}
+                key={entry.cursor}
                 data-index={virtualRow.index}
+                data-cursor={entry.cursor}
                 ref={rowVirtualizer.measureElement}
                 style={{
                   position: 'absolute',
