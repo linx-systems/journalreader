@@ -21,6 +21,11 @@ export function useJournalLogs() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Use refs to access current values without causing effect re-runs
+  const filterRef = useRef(filter);
+  const cursorEndRef = useRef(cursorEnd);
+  filterRef.current = filter;
+  cursorEndRef.current = cursorEnd;
 
   const fetchLogs = useCallback(async (append = false) => {
     // Cancel any pending request
@@ -33,9 +38,11 @@ export function useJournalLogs() {
     setError(null);
 
     try {
-      const filterToUse = append && cursorEnd
-        ? { ...filter, afterCursor: cursorEnd }
-        : filter;
+      const currentFilter = filterRef.current;
+      const currentCursorEnd = cursorEndRef.current;
+      const filterToUse = append && currentCursorEnd
+        ? { ...currentFilter, afterCursor: currentCursorEnd }
+        : currentFilter;
 
       const result = await queryJournal(filterToUse);
 
@@ -53,7 +60,7 @@ export function useJournalLogs() {
     } finally {
       setLoading(false);
     }
-  }, [filter, cursorEnd, setEntries, appendEntries, setLoading, setError, setHasMore, setCursorEnd]);
+  }, [setEntries, appendEntries, setLoading, setError, setHasMore, setCursorEnd]);
 
   const loadMore = useCallback(() => {
     if (!isLoading && hasMore) {
@@ -67,12 +74,15 @@ export function useJournalLogs() {
 
   // Track if we were previously in follow mode
   const wasFollowingRef = useRef(isFollowing);
+  // Track the filter for comparison (to detect actual filter changes)
+  const prevFilterRef = useRef(filter);
 
   // Debounced fetch when filter changes (skip if in follow mode)
   useEffect(() => {
     // If we just exited follow mode, fetch immediately
     if (wasFollowingRef.current && !isFollowing) {
       wasFollowingRef.current = false;
+      prevFilterRef.current = filter;
       fetchLogs(false);
       return;
     }
@@ -82,6 +92,13 @@ export function useJournalLogs() {
     if (isFollowing) {
       return;
     }
+
+    // Only fetch if filter actually changed (not just reference)
+    const filterChanged = JSON.stringify(prevFilterRef.current) !== JSON.stringify(filter);
+    if (!filterChanged) {
+      return;
+    }
+    prevFilterRef.current = filter;
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);

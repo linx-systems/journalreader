@@ -25,9 +25,15 @@ impl JournalReader {
             cmd.arg("-p").arg(format!("{}..{}", min, max));
         }
 
-        // Time filters
-        if let Some(since) = &filter.since {
-            cmd.arg("-S").arg(since);
+        // Cursor for pagination (mutually exclusive with --since)
+        // If we have a cursor, use it for pagination; otherwise use time filters
+        if let Some(cursor) = &filter.after_cursor {
+            cmd.arg("--after-cursor").arg(cursor);
+        } else {
+            // Time filters (only when not using cursor-based pagination)
+            if let Some(since) = &filter.since {
+                cmd.arg("-S").arg(since);
+            }
         }
 
         if let Some(until) = &filter.until {
@@ -58,11 +64,6 @@ impl JournalReader {
                     cmd.arg("--case-sensitive=false");
                 }
             }
-        }
-
-        // Cursor for pagination
-        if let Some(cursor) = &filter.after_cursor {
-            cmd.arg("--after-cursor").arg(cursor);
         }
 
         // Reverse order (newest first)

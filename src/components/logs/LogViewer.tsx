@@ -31,7 +31,7 @@ export function LogViewer() {
     getItemKey,
     estimateSize: () => 48,
     overscan: 10,
-    measureElement: (element) => element.getBoundingClientRect().height,
+    measureElement: (element) => element?.getBoundingClientRect().height ?? 48,
   });
 
   const updateAnchor = useCallback((preferredCursor?: string) => {
@@ -101,7 +101,7 @@ export function LogViewer() {
   const handleScroll = useCallback(() => {
     if (!parentRef.current) return;
 
-    const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
+    const { scrollTop } = parentRef.current;
 
     // Handle follow mode scroll behavior
     if (isFollowing && !isScrollingRef.current) {
@@ -118,13 +118,8 @@ export function LogViewer() {
       }
     }
 
-    // Handle load more (when not in follow mode)
-    if (!isFollowing) {
-      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
-      if (isNearBottom && hasMore && !isLoading) {
-        loadMore();
-      }
-    }
+    // No automatic load more on scroll - user clicks the button instead
+    // This prevents scroll position issues and infinite loading loops
 
     if (isFollowing && (isFollowPaused || expandedRows.size > 0)) {
       updateAnchor(lastExpandedCursorRef.current ?? undefined);
@@ -135,22 +130,19 @@ export function LogViewer() {
     isFollowing,
     isFollowPaused,
     expandedRows.size,
-    hasMore,
-    isLoading,
-    loadMore,
     pause,
     resume,
     updateAnchor,
     userScrolled,
   ]);
 
-  // Handle new entries in follow mode - reset virtualizer measurements and scroll to top
+  // Handle new entries in follow mode - scroll to top or maintain anchor position
   useEffect(() => {
     const prevLength = prevEntriesLengthRef.current;
     const newLength = entries.length;
 
     if (isFollowing && newLength > prevLength) {
-      // Scroll to top if not paused and no rows are expanded
+      // Follow mode: scroll to top if not paused and no rows are expanded
       if (!isFollowPaused && expandedRows.size === 0) {
         scrollToTop();
         anchorRef.current = null;
@@ -269,40 +261,48 @@ export function LogViewer() {
         onScroll={handleScroll}
         className="flex-1 overflow-auto"
       >
-        <div
-          style={{
-            height: `${rowVirtualizer.getTotalSize()}px`,
-            width: '100%',
-            position: 'relative',
-          }}
-        >
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const entry = entries[virtualRow.index];
-            const isExpanded = expandedRows.has(entry.cursor);
-            return (
-              <div
-                key={entry.cursor}
-                data-index={virtualRow.index}
-                data-cursor={entry.cursor}
-                ref={rowVirtualizer.measureElement}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  transform: `translateY(${virtualRow.start}px)`,
-                }}
-              >
-                <LogEntryRow
-                  entry={entry}
-                  searchPattern={filter.grepPattern}
-                  isExpanded={isExpanded}
-                  onToggleExpand={() => handleToggleExpand(entry.cursor)}
-                />
-              </div>
-            );
-          })}
-        </div>
+        {entries.length > 0 && (
+          <div
+            style={{
+              height: `${rowVirtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {rowVirtualizer
+              .getVirtualItems()
+              .filter((virtualRow) => {
+                if (!entries || virtualRow.index >= entries.length) return false;
+                return !!entries[virtualRow.index];
+              })
+              .map((virtualRow) => {
+                const entry = entries[virtualRow.index]!;
+                const isExpanded = expandedRows.has(entry.cursor);
+                return (
+                  <div
+                    key={entry.cursor}
+                    data-index={virtualRow.index}
+                    data-cursor={entry.cursor}
+                    ref={rowVirtualizer.measureElement}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    <LogEntryRow
+                      entry={entry}
+                      searchPattern={filter.grepPattern}
+                      isExpanded={isExpanded}
+                      onToggleExpand={() => handleToggleExpand(entry.cursor)}
+                    />
+                  </div>
+                );
+              })}
+          </div>
+        )}
 
         {/* Loading indicator */}
         {isLoading && (
