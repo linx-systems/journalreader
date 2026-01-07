@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { SearchBar } from './SearchBar';
+import { useState, useRef, forwardRef, useImperativeHandle } from 'react';
+import { SearchBar, type SearchBarRef } from './SearchBar';
 import { PriorityFilter } from './PriorityFilter';
 import { TimeRangePicker } from './TimeRangePicker';
 import { BootSelector } from './BootSelector';
@@ -11,7 +11,16 @@ import { BookmarkList, SaveFilterDialog } from '../bookmarks';
 import { RotateCcw, Star } from 'lucide-react';
 import { logError } from '../../lib/errorLogger';
 
-export function FilterPanel() {
+export interface FilterPanelRef {
+  focusSearch: () => void;
+}
+
+export const FilterPanel = forwardRef<FilterPanelRef>(function FilterPanel(_, ref) {
+  const searchBarRef = useRef<SearchBarRef>(null);
+
+  useImperativeHandle(ref, () => ({
+    focusSearch: () => searchBarRef.current?.focus(),
+  }));
   const { filter, resetFilter } = useFilterStore();
   const { addBookmark, importBookmarks, exportBookmarks, setActiveBookmark } = useBookmarkStore();
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -92,7 +101,7 @@ export function FilterPanel() {
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         <QuickFilters />
         <BookmarkList onImport={handleImport} onExport={handleExport} />
-        <SearchBar />
+        <SearchBar ref={searchBarRef} />
         <TimeRangePicker />
         <BootSelector />
         <PriorityFilter />
@@ -116,4 +125,4 @@ export function FilterPanel() {
       />
     </div>
   );
-}
+});

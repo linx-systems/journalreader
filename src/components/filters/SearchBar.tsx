@@ -1,8 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
 import { Search, X, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useFilterStore } from '../../stores/filterStore';
 
-export function SearchBar() {
+export interface SearchBarRef {
+  focus: () => void;
+}
+
+export const SearchBar = forwardRef<SearchBarRef>(function SearchBar(_, ref) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => inputRef.current?.focus(),
+  }));
   const { filter, setFilter } = useFilterStore();
   const [localValue, setLocalValue] = useState(filter.grepPattern ?? '');
 
@@ -32,6 +41,7 @@ export function SearchBar() {
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-theme-secondary" />
         <input
+          ref={inputRef}
           type="text"
           value={localValue}
           onChange={(e) => handleChange(e.target.value)}
@@ -68,4 +78,4 @@ export function SearchBar() {
       </div>
     </div>
   );
-}
+});

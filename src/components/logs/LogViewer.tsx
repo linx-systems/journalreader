@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
+import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 import { LogEntryRow } from './LogEntry';
 import { LogExport, type LogExportResult } from './LogExport';
 import { Loader2, AlertCircle, FileSearch, ArrowDown } from 'lucide-react';
@@ -23,6 +24,7 @@ export function LogViewer() {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [userScrolled, setUserScrolled] = useState(false);
   const [exportNotification, setExportNotification] = useState<LogExportResult | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   const handleExportComplete = useCallback((result: LogExportResult) => {
     setExportNotification(result);
@@ -53,6 +55,52 @@ export function LogViewer() {
     overscan: 10,
     measureElement: (element) => element?.getBoundingClientRect().height ?? 48,
   });
+
+  // Handle keyboard navigation toggle expand by index
+  const handleKeyboardToggleExpand = useCallback((index: number) => {
+    const entry = entries[index];
+    if (entry) {
+      // Use the same expand logic but called by index
+      const cursor = entry.cursor;
+      if (parentRef.current) {
+        const parent = parentRef.current;
+        const anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
+        if (anchorEl) {
+          const parentRect = parent.getBoundingClientRect();
+          const anchorRect = anchorEl.getBoundingClientRect();
+          viewerState.current.anchor = {
+            cursor,
+            offset: anchorRect.top - parentRect.top,
+          };
+        }
+      }
+      setExpandedRows((prev) => {
+        const next = new Set(prev);
+        if (next.has(cursor)) {
+          next.delete(cursor);
+        } else {
+          next.add(cursor);
+          viewerState.current.lastExpandedCursor = cursor;
+        }
+        return next;
+      });
+    }
+  }, [entries]);
+
+  // Keyboard navigation for log list
+  useKeyboardNavigation({
+    itemCount: entries.length,
+    selectedIndex,
+    onSelectionChange: setSelectedIndex,
+    onToggleExpand: handleKeyboardToggleExpand,
+    virtualizer: rowVirtualizer,
+    enabled: !isLoading && entries.length > 0,
+  });
+
+  // Clear selection when entries change (filter change)
+  useEffect(() => {
+    setSelectedIndex(null);
+  }, [filter]);
 
   const updateAnchor = useCallback((preferredCursor?: string) => {
     if (!parentRef.current) return;
@@ -337,6 +385,10 @@ export function LogViewer() {
         ref={parentRef}
         onScroll={handleScroll}
         className="flex-1 overflow-auto"
+        role="listbox"
+        aria-label="Log entries"
+        aria-activedescendant={selectedIndex !== null ? `log-entry-${selectedIndex}` : undefined}
+        tabIndex={0}
       >
         {entries.length > 0 && (
           <div
@@ -345,6 +397,7 @@ export function LogViewer() {
               width: '100%',
               position: 'relative',
             }}
+            role="presentation"
           >
             {rowVirtualizer
               .getVirtualItems()
@@ -355,12 +408,16 @@ export function LogViewer() {
               .map((virtualRow) => {
                 const entry = entries[virtualRow.index]!;
                 const isExpanded = expandedRows.has(entry.cursor);
+                const isSelected = selectedIndex === virtualRow.index;
                 return (
                   <div
                     key={entry.cursor}
+                    id={`log-entry-${virtualRow.index}`}
                     data-index={virtualRow.index}
                     data-cursor={entry.cursor}
                     ref={rowVirtualizer.measureElement}
+                    role="option"
+                    aria-selected={isSelected}
                     style={{
                       position: 'absolute',
                       top: 0,
@@ -373,6 +430,7 @@ export function LogViewer() {
                       entry={entry}
                       searchPattern={filter.grepPattern}
                       isExpanded={isExpanded}
+                      isSelected={isSelected}
                       onToggleExpand={handleToggleExpand}
                     />
                   </div>

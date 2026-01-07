@@ -1,24 +1,69 @@
-import { useState } from 'react';
-import { FilterPanel } from './components/filters/FilterPanel';
+import { useState, useRef, useCallback } from 'react';
+import { FilterPanel, type FilterPanelRef } from './components/filters/FilterPanel';
 import { LogViewer } from './components/logs/LogViewer';
 import { StatisticsView } from './components/statistics/StatisticsView';
 import { Toolbar } from './components/toolbar/Toolbar';
 import { SettingsPanel } from './components/settings/SettingsPanel';
+import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useBookmarkShortcuts } from './hooks/useBookmarkShortcuts';
+import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useBookmarkStore } from './stores/bookmarkStore';
 import { useStatisticsStore } from './stores/statisticsStore';
-import { PanelLeftClose, PanelLeft, ScrollText, Settings, Bookmark } from 'lucide-react';
+import { useFilterStore } from './stores/filterStore';
+import { useJournalLogs } from './hooks/useJournalLogs';
+import { PanelLeftClose, PanelLeft, ScrollText, Settings, Bookmark, Keyboard } from 'lucide-react';
 import clsx from 'clsx';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const filterPanelRef = useRef<FilterPanelRef>(null);
   const { activeBookmarkId, bookmarks } = useBookmarkStore();
   const { viewMode } = useStatisticsStore();
+  const { isFollowing } = useFilterStore();
+  const { refresh, isLoading } = useJournalLogs();
 
   // Enable keyboard shortcuts for bookmarks (Ctrl+1 through Ctrl+9)
   useBookmarkShortcuts();
+
+  // Callbacks for global shortcuts
+  const handleFocusSearch = useCallback(() => {
+    // Open sidebar if closed before focusing search
+    if (!sidebarOpen) {
+      setSidebarOpen(true);
+    }
+    // Small delay to let sidebar open if it was closed
+    setTimeout(() => filterPanelRef.current?.focusSearch(), 50);
+  }, [sidebarOpen]);
+
+  const handleRefresh = useCallback(() => {
+    if (!isLoading && !isFollowing) {
+      refresh();
+    }
+  }, [refresh, isLoading, isFollowing]);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarOpen((prev) => !prev);
+  }, []);
+
+  const handleOpenSettings = useCallback(() => {
+    setSettingsOpen(true);
+  }, []);
+
+  const handleShowHelp = useCallback(() => {
+    setHelpOpen(true);
+  }, []);
+
+  // Enable global keyboard shortcuts
+  useGlobalShortcuts({
+    onFocusSearch: handleFocusSearch,
+    onRefresh: handleRefresh,
+    onToggleSidebar: handleToggleSidebar,
+    onOpenSettings: handleOpenSettings,
+    onShowHelp: handleShowHelp,
+  });
 
   const activeBookmark = activeBookmarkId
     ? bookmarks.find((b) => b.id === activeBookmarkId)
@@ -53,14 +98,24 @@ function App() {
             )}
           </div>
         </div>
-        <button
-          onClick={() => setSettingsOpen(true)}
-          className="p-1.5 text-theme-secondary hover:text-theme
-                     hover:bg-theme-secondary rounded transition-colors"
-          title="Settings"
-        >
-          <Settings className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="p-1.5 text-theme-secondary hover:text-theme
+                       hover:bg-theme-secondary rounded transition-colors"
+            title="Keyboard shortcuts (?)"
+          >
+            <Keyboard className="h-5 w-5" />
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-1.5 text-theme-secondary hover:text-theme
+                       hover:bg-theme-secondary rounded transition-colors"
+            title="Settings (Ctrl+,)"
+          >
+            <Settings className="h-5 w-5" />
+          </button>
+        </div>
       </header>
 
       {/* Main content */}
@@ -73,7 +128,7 @@ function App() {
           )}
         >
           <ErrorBoundary name="Filter Panel">
-            <FilterPanel />
+            <FilterPanel ref={filterPanelRef} />
           </ErrorBoundary>
         </aside>
 
@@ -88,6 +143,9 @@ function App() {
 
       {/* Settings Panel */}
       <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
     </div>
   );
 }

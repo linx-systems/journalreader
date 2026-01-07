@@ -11,6 +11,7 @@ interface LogEntryProps {
   entry: JournalEntry;
   searchPattern?: string;
   isExpanded: boolean;
+  isSelected?: boolean;
   onToggleExpand: (cursor: string) => void;
 }
 
@@ -47,7 +48,7 @@ const PRIORITY_CSS_CLASSES: Record<number, string> = {
   7: 'log-debug priority-bg-debug',
 };
 
-export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isExpanded, onToggleExpand }: LogEntryProps) {
+export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isExpanded, isSelected, onToggleExpand }: LogEntryProps) {
   const handleToggle = () => onToggleExpand(entry.cursor);
   const [copied, setCopied] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -116,7 +117,8 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
     <div
       className={clsx(
         'border-b border-theme',
-        isExpanded ? 'bg-theme-secondary' : 'hover:bg-theme-secondary'
+        isExpanded ? 'bg-theme-secondary' : 'hover:bg-theme-secondary',
+        isSelected && 'ring-2 ring-inset ring-accent/50 bg-accent/5'
       )}
       onContextMenu={handleContextMenu}
     >
@@ -245,5 +247,6 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
 }, (prev, next) => {
   return prev.entry.cursor === next.entry.cursor
     && prev.isExpanded === next.isExpanded
+    && prev.isSelected === next.isSelected
     && prev.searchPattern === next.searchPattern;
 });
