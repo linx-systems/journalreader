@@ -10,15 +10,22 @@ interface FilterState {
   hasMore: boolean;
   cursorEnd: string | null;
 
+  // Follow mode state
+  isFollowing: boolean;
+  isFollowPaused: boolean;
+
   // Actions
   setFilter: (filter: Partial<JournalFilter>) => void;
   resetFilter: () => void;
   setEntries: (entries: JournalEntry[]) => void;
   appendEntries: (entries: JournalEntry[]) => void;
+  prependEntries: (entries: JournalEntry[]) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setHasMore: (hasMore: boolean) => void;
   setCursorEnd: (cursor: string | null) => void;
+  setFollowing: (following: boolean) => void;
+  setFollowPaused: (paused: boolean) => void;
 }
 
 export const useFilterStore = create<FilterState>((set) => ({
@@ -28,6 +35,8 @@ export const useFilterStore = create<FilterState>((set) => ({
   error: null,
   hasMore: false,
   cursorEnd: null,
+  isFollowing: false,
+  isFollowPaused: false,
 
   setFilter: (newFilter) =>
     set((state) => ({
@@ -54,6 +63,12 @@ export const useFilterStore = create<FilterState>((set) => ({
       entries: [...state.entries, ...newEntries],
     })),
 
+  // Add new entries at the beginning (for follow mode with newest-first display)
+  prependEntries: (newEntries) =>
+    set((state) => ({
+      entries: [...newEntries, ...state.entries],
+    })),
+
   setLoading: (isLoading) => set({ isLoading }),
 
   setError: (error) => set({ error }),
@@ -61,4 +76,8 @@ export const useFilterStore = create<FilterState>((set) => ({
   setHasMore: (hasMore) => set({ hasMore }),
 
   setCursorEnd: (cursorEnd) => set({ cursorEnd }),
+
+  setFollowing: (isFollowing) => set({ isFollowing }),
+
+  setFollowPaused: (isFollowPaused) => set({ isFollowPaused }),
 }));

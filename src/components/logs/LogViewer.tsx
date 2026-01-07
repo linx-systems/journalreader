@@ -1,15 +1,20 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
+import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
 import { LogEntryRow } from './LogEntry';
-import { Loader2, AlertCircle, FileSearch } from 'lucide-react';
+import { Loader2, AlertCircle, FileSearch, ArrowDown } from 'lucide-react';
 
 export function LogViewer() {
   const parentRef = useRef<HTMLDivElement>(null);
   const { entries, isLoading, error, hasMore, loadMore } = useJournalLogs();
-  const { filter } = useFilterStore();
+  const { filter, isFollowing, isFollowPaused } = useFilterStore();
+  const { pause, resume } = useFollowMode();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [userScrolled, setUserScrolled] = useState(false);
+  const prevEntriesLengthRef = useRef(entries.length);
+  const isScrollingRef = useRef(false);
 
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
@@ -31,16 +36,60 @@ export function LogViewer() {
     });
   }, []);
 
+  // Scroll to top (where newest entries appear in follow mode)
+  const scrollToTop = useCallback(() => {
+    if (!parentRef.current) return;
+    isScrollingRef.current = true;
+    parentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 500);
+  }, []);
+
   const handleScroll = useCallback(() => {
     if (!parentRef.current) return;
 
     const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
 
-    if (isNearBottom && hasMore && !isLoading) {
-      loadMore();
+    // Handle follow mode scroll behavior
+    if (isFollowing && !isScrollingRef.current) {
+      const atTop = scrollTop < 50;
+
+      if (!atTop && !userScrolled) {
+        // User scrolled away from top - pause follow mode
+        setUserScrolled(true);
+        pause();
+      } else if (atTop && userScrolled) {
+        // User scrolled back to top - resume follow mode
+        setUserScrolled(false);
+        resume();
+      }
     }
-  }, [hasMore, isLoading, loadMore]);
+
+    // Handle load more (when not in follow mode)
+    if (!isFollowing) {
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      if (isNearBottom && hasMore && !isLoading) {
+        loadMore();
+      }
+    }
+  }, [isFollowing, hasMore, isLoading, loadMore, pause, resume, userScrolled]);
+
+  // Auto-scroll to top when new entries arrive in follow mode
+  useEffect(() => {
+    if (isFollowing && !isFollowPaused && entries.length > prevEntriesLengthRef.current) {
+      // New entries arrived - scroll to top if not paused
+      scrollToTop();
+    }
+    prevEntriesLengthRef.current = entries.length;
+  }, [entries.length, isFollowing, isFollowPaused, scrollToTop]);
+
+  // Reset user scrolled state when follow mode stops
+  useEffect(() => {
+    if (!isFollowing) {
+      setUserScrolled(false);
+    }
+  }, [isFollowing]);
 
   if (error) {
     return (
@@ -67,7 +116,7 @@ export function LogViewer() {
     );
   }
 
-  if (!isLoading && entries.length === 0) {
+  if (!isLoading && entries.length === 0 && !isFollowing) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-8">
@@ -83,8 +132,30 @@ export function LogViewer() {
     );
   }
 
+  // Show waiting message when follow mode is active but no entries yet
+  if (isFollowing && entries.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center p-8">
+          <div className="relative flex justify-center mb-4">
+            <span className="relative flex h-6 w-6">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-6 w-6 bg-green-500"></span>
+            </span>
+          </div>
+          <h3 className="text-lg font-medium text-theme mb-2">
+            Waiting for new log entries...
+          </h3>
+          <p className="text-sm text-theme-secondary">
+            New entries will appear here as they are written to the journal
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col min-h-0 relative">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 bg-theme-secondary border-b border-theme text-xs font-medium text-theme-secondary">
         <div className="w-6"></div>
@@ -143,7 +214,7 @@ export function LogViewer() {
         )}
 
         {/* Load more indicator */}
-        {hasMore && !isLoading && (
+        {hasMore && !isLoading && !isFollowing && (
           <div className="flex items-center justify-center py-4">
             <button
               onClick={loadMore}
@@ -154,6 +225,24 @@ export function LogViewer() {
           </div>
         )}
       </div>
+
+      {/* Follow mode paused indicator - floating button to scroll to top */}
+      {isFollowing && isFollowPaused && (
+        <div className="absolute bottom-4 right-4 z-10">
+          <button
+            onClick={() => {
+              scrollToTop();
+              resume();
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700
+                       text-white text-sm font-medium rounded-lg shadow-lg
+                       transition-colors"
+          >
+            <ArrowDown className="h-4 w-4 rotate-180" />
+            Resume following
+          </button>
+        </div>
+      )}
     </div>
   );
 }

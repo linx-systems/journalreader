@@ -106,3 +106,12 @@ export const TIME_PRESETS: TimePreset[] = [
   { label: '7 days', value: '7 days ago' },
   { label: '30 days', value: '30 days ago' },
 ];
+
+// Follow mode event payloads
+export interface FollowEvent {
+  entries: JournalEntry[];
+}
+
+export interface FollowErrorEvent {
+  message: string;
+}
