@@ -26,3 +26,5 @@ regex = "1"
 ssh2 = "0.9"
 uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "5"
+# Signal handling for graceful shutdown
+ctrlc = "3"

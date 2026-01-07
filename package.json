@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tauri": "trap 'exit 0' TERM; vite & wait",
     "build": "vite build",
     "build:check": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",

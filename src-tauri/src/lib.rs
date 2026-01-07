@@ -27,6 +27,16 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            // Install signal handler for graceful shutdown with exit code 0
+            // This prevents exit code 143 (SIGTERM) when stopping dev server
+            let handle = app.handle().clone();
+            ctrlc::set_handler(move || {
+                handle.exit(0);
+            })
+            .expect("Error setting signal handler");
+            Ok(())
+        })
         // Local journal state
         .manage(FollowerState(Mutex::new(JournalFollower::new())))
         // Remote host state
