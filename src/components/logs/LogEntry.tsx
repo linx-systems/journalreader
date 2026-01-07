@@ -14,11 +14,12 @@ interface LogEntryProps {
   onToggleExpand: (cursor: string) => void;
 }
 
-function highlightText(text: string, pattern?: string): React.ReactNode {
+function highlightText(text: string, pattern?: string, caseSensitive?: boolean): React.ReactNode {
   if (!pattern) return text;
 
   try {
-    const regex = new RegExp(`(${pattern})`, 'gi');
+    const flags = caseSensitive ? 'g' : 'gi';
+    const regex = new RegExp(`(${pattern})`, flags);
     const parts = text.split(regex);
 
     return parts.map((part, i) =>
@@ -154,7 +155,7 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
         {/* Message */}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-mono text-theme truncate">
-            {highlightText(entry.message, searchPattern)}
+            {highlightText(entry.message, searchPattern, filter.caseSensitive)}
           </p>
         </div>
       </div>
@@ -184,7 +185,7 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
 
           {/* Full message */}
           <div className="p-2 bg-theme-secondary rounded font-mono text-sm whitespace-pre-wrap break-all">
-            {highlightText(entry.message, searchPattern)}
+            {highlightText(entry.message, searchPattern, filter.caseSensitive)}
           </div>
 
           {/* Metadata */}

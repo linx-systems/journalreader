@@ -4,6 +4,7 @@ import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
 import { LogEntryRow } from './LogEntry';
+import { LogExport, type LogExportResult } from './LogExport';
 import { Loader2, AlertCircle, FileSearch, ArrowDown } from 'lucide-react';
 
 // Consolidated viewer state to reduce ref fragmentation
@@ -21,6 +22,12 @@ export function LogViewer() {
   const { pause, resume } = useFollowMode();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [userScrolled, setUserScrolled] = useState(false);
+  const [exportNotification, setExportNotification] = useState<LogExportResult | null>(null);
+
+  const handleExportComplete = useCallback((result: LogExportResult) => {
+    setExportNotification(result);
+    setTimeout(() => setExportNotification(null), 3000);
+  }, []);
 
   // Consolidated state ref for scroll/anchor management
   const viewerState = useRef<ViewerState>({
@@ -305,7 +312,25 @@ export function LogViewer() {
         <div className="w-16 text-center">Level</div>
         <div className="w-48">Unit</div>
         <div className="flex-1">Message</div>
+        <LogExport
+          entries={entries}
+          filter={filter}
+          onExportComplete={handleExportComplete}
+        />
       </div>
+
+      {/* Export notification */}
+      {exportNotification && (
+        <div
+          className={`px-3 py-2 text-sm ${
+            exportNotification.type === 'success'
+              ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+              : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+          }`}
+        >
+          {exportNotification.message}
+        </div>
+      )}
 
       {/* Virtualized list */}
       <div
