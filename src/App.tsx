@@ -4,6 +4,7 @@ import { LogViewer } from './components/logs/LogViewer';
 import { StatisticsView } from './components/statistics/StatisticsView';
 import { Toolbar } from './components/toolbar/Toolbar';
 import { SettingsPanel } from './components/settings/SettingsPanel';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useBookmarkShortcuts } from './hooks/useBookmarkShortcuts';
 import { useBookmarkStore } from './stores/bookmarkStore';
 import { useStatisticsStore } from './stores/statisticsStore';
@@ -71,13 +72,17 @@ function App() {
             sidebarOpen ? 'w-72' : 'w-0 overflow-hidden'
           )}
         >
-          <FilterPanel />
+          <ErrorBoundary name="Filter Panel">
+            <FilterPanel />
+          </ErrorBoundary>
         </aside>
 
         {/* Main area */}
         <main className="flex-1 flex flex-col min-w-0 bg-theme">
           <Toolbar />
-          {viewMode === 'logs' ? <LogViewer /> : <StatisticsView />}
+          <ErrorBoundary name={viewMode === 'logs' ? 'Log Viewer' : 'Statistics'}>
+            {viewMode === 'logs' ? <LogViewer /> : <StatisticsView />}
+          </ErrorBoundary>
         </main>
       </div>
 
