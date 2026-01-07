@@ -104,5 +104,5 @@ export const TIME_PRESETS: TimePreset[] = [
   { label: '6 hours', value: '6 hours ago' },
   { label: '24 hours', value: '24 hours ago' },
   { label: '7 days', value: '7 days ago' },
-  { label: 'This boot', value: '' }, // Special case: use boot filter
+  { label: '30 days', value: '30 days ago' },
 ];

@@ -1,6 +1,7 @@
 import { SearchBar } from './SearchBar';
 import { PriorityFilter } from './PriorityFilter';
 import { TimeRangePicker } from './TimeRangePicker';
+import { BootSelector } from './BootSelector';
 import { UnitSelector } from './UnitSelector';
 import { useFilterStore } from '../../stores/filterStore';
 import { RotateCcw } from 'lucide-react';
@@ -24,6 +25,7 @@ export function FilterPanel() {
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         <SearchBar />
         <TimeRangePicker />
+        <BootSelector />
         <PriorityFilter />
         <UnitSelector />
       </div>
