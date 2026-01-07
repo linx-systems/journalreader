@@ -1,7 +1,11 @@
 use crate::error::JournalError;
-use crate::journal::types::{BootInfo, JournalEntry, JournalFilter, JournalQueryResult, SystemUnit};
+use crate::journal::types::{
+    BootInfo, JournalEntry, JournalFilter, JournalQueryResult, JournalStatistics, PriorityCount,
+    ServiceCount, StatisticsRequest, SystemUnit, TimeseriesPoint,
+};
 use regex::Regex;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::process::Command;
 
 pub struct JournalReader;
@@ -377,6 +381,196 @@ impl JournalReader {
             } else {
                 v.as_u64().map(|n| n as u32)
             }
+        })
+    }
+
+    pub fn get_statistics(request: &StatisticsRequest) -> Result<JournalStatistics, JournalError> {
+        let filter = &request.filter;
+        let granularity_ms = request.granularity_ms;
+
+        let mut cmd = Command::new("journalctl");
+        cmd.arg("-o").arg("json");
+        cmd.arg("--no-pager");
+
+        // Apply unit filters
+        for unit in &filter.units {
+            cmd.arg("-u").arg(unit);
+        }
+
+        // Priority filter
+        if !filter.priorities.is_empty() {
+            let min = filter.priorities.iter().min().unwrap();
+            let max = filter.priorities.iter().max().unwrap();
+            cmd.arg("-p").arg(format!("{}..{}", min, max));
+        }
+
+        // Time filters
+        if let Some(since) = &filter.since {
+            cmd.arg("-S").arg(since);
+        }
+
+        if let Some(until) = &filter.until {
+            cmd.arg("-U").arg(until);
+        }
+
+        // Boot filter
+        if let Some(boot_id) = &filter.boot_id {
+            cmd.arg("-b").arg(boot_id);
+        } else if let Some(offset) = filter.boot_offset {
+            cmd.arg("-b").arg(offset.to_string());
+        }
+
+        // Identifier filter
+        if let Some(identifier) = &filter.identifier {
+            cmd.arg("-t").arg(identifier);
+        }
+
+        // Grep pattern
+        if let Some(pattern) = &filter.grep_pattern {
+            if !pattern.is_empty() {
+                if Regex::new(pattern).is_err() {
+                    return Err(JournalError::InvalidRegex(pattern.clone()));
+                }
+                cmd.arg("-g").arg(pattern);
+                if !filter.case_sensitive {
+                    cmd.arg("--case-sensitive=false");
+                }
+            }
+        }
+
+        let output = cmd.output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("No journal files were found")
+                || stderr.contains("Failed to open journal")
+            {
+                return Err(JournalError::JournalNotAvailable);
+            }
+            if stderr.contains("Permission denied") || stderr.contains("access denied") {
+                return Err(JournalError::PermissionDenied);
+            }
+            return Err(JournalError::ExecutionError(stderr.to_string()));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Aggregation maps
+        let mut timeseries_map: HashMap<i64, (u64, u64, u64)> = HashMap::new(); // (count, errors, warnings)
+        let mut priority_map: HashMap<u8, u64> = HashMap::new();
+        let mut service_map: HashMap<String, u64> = HashMap::new();
+        let mut total_count: u64 = 0;
+        let mut error_count: u64 = 0;
+
+        let priority_labels = [
+            "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug",
+        ];
+
+        for line in stdout.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let value: Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // Check excluded units
+            if !filter.excluded_units.is_empty() {
+                if let Some(unit) = value.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
+                    if filter.excluded_units.contains(&unit.to_string()) {
+                        continue;
+                    }
+                }
+            }
+
+            total_count += 1;
+
+            // Get timestamp and bucket it
+            let timestamp = Self::get_timestamp(&value, "__REALTIME_TIMESTAMP");
+            // Convert from microseconds to milliseconds, then bucket
+            let timestamp_ms = timestamp / 1000;
+            let bucket = (timestamp_ms / granularity_ms) * granularity_ms;
+
+            // Get priority
+            let priority = Self::get_priority(&value);
+            let is_error = priority <= 3; // emerg, alert, crit, err
+            let is_warning = priority == 4;
+
+            if is_error {
+                error_count += 1;
+            }
+
+            // Update timeseries
+            let entry = timeseries_map.entry(bucket).or_insert((0, 0, 0));
+            entry.0 += 1;
+            if is_error {
+                entry.1 += 1;
+            }
+            if is_warning {
+                entry.2 += 1;
+            }
+
+            // Update priority distribution
+            *priority_map.entry(priority).or_insert(0) += 1;
+
+            // Update service counts
+            let service = value
+                .get("_SYSTEMD_UNIT")
+                .and_then(|v| v.as_str())
+                .or_else(|| value.get("SYSLOG_IDENTIFIER").and_then(|v| v.as_str()))
+                .unwrap_or("unknown")
+                .to_string();
+            *service_map.entry(service).or_insert(0) += 1;
+        }
+
+        // Convert timeseries map to sorted vec
+        let mut timeseries: Vec<TimeseriesPoint> = timeseries_map
+            .into_iter()
+            .map(|(timestamp, (count, errors, warnings))| TimeseriesPoint {
+                timestamp,
+                count,
+                error_count: errors,
+                warning_count: warnings,
+            })
+            .collect();
+        timeseries.sort_by_key(|p| p.timestamp);
+
+        // Convert priority map to vec with labels
+        let mut priority_distribution: Vec<PriorityCount> = priority_map
+            .into_iter()
+            .map(|(priority, count)| PriorityCount {
+                priority,
+                label: priority_labels
+                    .get(priority as usize)
+                    .unwrap_or(&"unknown")
+                    .to_string(),
+                count,
+            })
+            .collect();
+        priority_distribution.sort_by_key(|p| p.priority);
+
+        // Convert service map to sorted vec (top services first)
+        let mut top_services: Vec<ServiceCount> = service_map
+            .into_iter()
+            .map(|(service, count)| ServiceCount { service, count })
+            .collect();
+        top_services.sort_by(|a, b| b.count.cmp(&a.count));
+        top_services.truncate(20); // Keep top 20
+
+        let error_rate = if total_count > 0 {
+            (error_count as f64 / total_count as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        Ok(JournalStatistics {
+            timeseries,
+            priority_distribution,
+            top_services,
+            total_count,
+            error_rate,
         })
     }
 }

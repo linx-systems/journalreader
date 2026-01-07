@@ -1,6 +1,7 @@
 use crate::error::JournalError;
 use crate::journal::{
-    BootInfo, JournalFilter, JournalFollower, JournalQueryResult, JournalReader, SystemUnit,
+    BootInfo, JournalFilter, JournalFollower, JournalQueryResult, JournalReader, JournalStatistics,
+    StatisticsRequest, SystemUnit,
 };
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
@@ -66,4 +67,11 @@ pub fn is_following(state: State<'_, FollowerState>) -> Result<bool, JournalErro
         .lock()
         .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
     Ok(follower.is_running())
+}
+
+#[tauri::command]
+pub async fn get_statistics(request: StatisticsRequest) -> Result<JournalStatistics, JournalError> {
+    tokio::task::spawn_blocking(move || JournalReader::get_statistics(&request))
+        .await
+        .map_err(|e| JournalError::ExecutionError(e.to_string()))?
 }
