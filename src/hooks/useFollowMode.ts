@@ -4,6 +4,62 @@ import { useFilterStore } from '../stores/filterStore';
 import { startFollow, stopFollow } from '../lib/tauri';
 import type { FollowEvent, FollowErrorEvent } from '../lib/types';
 
+// Global state to track if listeners are set up (singleton pattern)
+let listenersSetUp = false;
+let globalUnlistenEntry: UnlistenFn | null = null;
+let globalUnlistenError: UnlistenFn | null = null;
+let globalUnlistenStopped: UnlistenFn | null = null;
+
+async function setupListeners(
+  prependEntries: (entries: any[]) => void,
+  setError: (error: string | null) => void,
+  setFollowing: (following: boolean) => void
+) {
+  if (listenersSetUp) return;
+  listenersSetUp = true;
+
+  globalUnlistenEntry = await listen<FollowEvent>(
+    'journal-follow-entry',
+    (event) => {
+      const { entries } = event.payload;
+      if (entries.length > 0) {
+        prependEntries(entries);
+      }
+    }
+  );
+
+  globalUnlistenError = await listen<FollowErrorEvent>(
+    'journal-follow-error',
+    (event) => {
+      setError(`Follow mode error: ${event.payload.message}`);
+      setFollowing(false);
+    }
+  );
+
+  globalUnlistenStopped = await listen(
+    'journal-follow-stopped',
+    () => {
+      setFollowing(false);
+    }
+  );
+}
+
+function cleanupListeners() {
+  if (globalUnlistenEntry) {
+    globalUnlistenEntry();
+    globalUnlistenEntry = null;
+  }
+  if (globalUnlistenError) {
+    globalUnlistenError();
+    globalUnlistenError = null;
+  }
+  if (globalUnlistenStopped) {
+    globalUnlistenStopped();
+    globalUnlistenStopped = null;
+  }
+  listenersSetUp = false;
+}
+
 export function useFollowMode() {
   const {
     filter,
@@ -15,58 +71,13 @@ export function useFollowMode() {
     setError,
   } = useFilterStore();
 
-  const unlistenEntryRef = useRef<UnlistenFn | null>(null);
-  const unlistenErrorRef = useRef<UnlistenFn | null>(null);
-  const unlistenStoppedRef = useRef<UnlistenFn | null>(null);
-
-  // Cleanup function
-  const cleanup = useCallback(async () => {
-    if (unlistenEntryRef.current) {
-      unlistenEntryRef.current();
-      unlistenEntryRef.current = null;
-    }
-    if (unlistenErrorRef.current) {
-      unlistenErrorRef.current();
-      unlistenErrorRef.current = null;
-    }
-    if (unlistenStoppedRef.current) {
-      unlistenStoppedRef.current();
-      unlistenStoppedRef.current = null;
-    }
-  }, []);
+  const isFirstMount = useRef(true);
 
   // Start follow mode
   const start = useCallback(async () => {
     try {
-      // Clean up any existing listeners
-      await cleanup();
-
-      // Set up event listeners before starting
-      unlistenEntryRef.current = await listen<FollowEvent>(
-        'journal-follow-entry',
-        (event) => {
-          const { entries } = event.payload;
-          if (entries.length > 0) {
-            // Prepend new entries to the top (newest first)
-            prependEntries(entries);
-          }
-        }
-      );
-
-      unlistenErrorRef.current = await listen<FollowErrorEvent>(
-        'journal-follow-error',
-        (event) => {
-          setError(`Follow mode error: ${event.payload.message}`);
-          setFollowing(false);
-        }
-      );
-
-      unlistenStoppedRef.current = await listen(
-        'journal-follow-stopped',
-        () => {
-          setFollowing(false);
-        }
-      );
+      // Set up listeners if not already done
+      await setupListeners(prependEntries, setError, setFollowing);
 
       // Start the follow process in Rust
       await startFollow(filter);
@@ -76,9 +87,8 @@ export function useFollowMode() {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setError(`Failed to start follow mode: ${errorMessage}`);
       setFollowing(false);
-      await cleanup();
     }
-  }, [filter, prependEntries, setError, setFollowing, setFollowPaused, cleanup]);
+  }, [filter, prependEntries, setError, setFollowing, setFollowPaused]);
 
   // Stop follow mode
   const stop = useCallback(async () => {
@@ -89,8 +99,8 @@ export function useFollowMode() {
     }
     setFollowing(false);
     setFollowPaused(false);
-    await cleanup();
-  }, [setFollowing, setFollowPaused, cleanup]);
+    cleanupListeners();
+  }, [setFollowing, setFollowPaused]);
 
   // Toggle follow mode
   const toggle = useCallback(async () => {
@@ -115,25 +125,32 @@ export function useFollowMode() {
     }
   }, [isFollowing, isFollowPaused, setFollowPaused]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount (only if this is the component that started follow mode)
   useEffect(() => {
     return () => {
-      // Stop follow mode when component unmounts
-      stopFollow().catch(console.error);
-      cleanup();
+      // Only cleanup if we're actually following
+      if (isFollowing) {
+        stopFollow().catch(console.error);
+        cleanupListeners();
+      }
     };
-  }, [cleanup]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Restart follow mode when filter changes (to apply new filters)
   const filterRef = useRef(filter);
   useEffect(() => {
     // Skip the initial render
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      filterRef.current = filter;
+      return;
+    }
+
     if (filterRef.current === filter) return;
     filterRef.current = filter;
 
     // If following, restart with the new filter
     if (isFollowing) {
-      // Restart follow with new filter
       startFollow(filter).catch((err) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(`Failed to update follow filter: ${errorMessage}`);
