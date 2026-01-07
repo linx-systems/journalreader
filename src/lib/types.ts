@@ -109,6 +109,41 @@ export const TIME_PRESETS: TimePreset[] = [
   { label: '30 days', value: '30 days ago' },
 ];
 
+// Quick filter presets
+export interface QuickFilter {
+  id: string;
+  label: string;
+  filters: Partial<JournalFilter>;
+}
+
+export const QUICK_FILTERS: QuickFilter[] = [
+  {
+    id: 'errors',
+    label: 'Errors',
+    filters: { priorities: [0, 1, 2, 3] },
+  },
+  {
+    id: 'last-hour-errors',
+    label: 'Last Hour Errors',
+    filters: { since: '1 hour ago', priorities: [0, 1, 2, 3] },
+  },
+  {
+    id: 'warnings',
+    label: 'Warnings+',
+    filters: { priorities: [0, 1, 2, 3, 4] },
+  },
+  {
+    id: 'today',
+    label: 'Today',
+    filters: { since: 'today' },
+  },
+  {
+    id: 'this-boot',
+    label: 'This Boot',
+    filters: { bootOffset: 0 },
+  },
+];
+
 // Follow mode event payloads
 export interface FollowEvent {
   entries: JournalEntry[];

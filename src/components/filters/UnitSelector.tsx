@@ -6,6 +6,29 @@ import clsx from 'clsx';
 
 type SelectionMode = 'include' | 'exclude';
 
+function HighlightedText({ text, highlight }: { text: string; highlight: string }) {
+  if (!highlight.trim()) {
+    return <>{text}</>;
+  }
+
+  const regex = new RegExp(`(${highlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 rounded px-0.5">
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
+
 export function UnitSelector() {
   const { filter, setFilter } = useFilterStore();
   const { units, isLoading } = useUnits();
@@ -208,7 +231,9 @@ export function UnitSelector() {
                       mode === 'exclude' && 'hover:bg-red-50 dark:hover:bg-red-900/20'
                     )}
                   >
-                    <span className="font-mono text-xs">{unit.name}</span>
+                    <span className="font-mono text-xs">
+                      <HighlightedText text={unit.name} highlight={search} />
+                    </span>
                   </button>
                 ))
               )}

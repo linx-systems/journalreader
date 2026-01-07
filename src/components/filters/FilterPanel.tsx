@@ -4,6 +4,7 @@ import { PriorityFilter } from './PriorityFilter';
 import { TimeRangePicker } from './TimeRangePicker';
 import { BootSelector } from './BootSelector';
 import { UnitSelector } from './UnitSelector';
+import { QuickFilters } from './QuickFilters';
 import { useFilterStore } from '../../stores/filterStore';
 import { useBookmarkStore } from '../../stores/bookmarkStore';
 import { BookmarkList, SaveFilterDialog } from '../bookmarks';
@@ -89,6 +90,7 @@ export function FilterPanel() {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        <QuickFilters />
         <BookmarkList onImport={handleImport} onExport={handleExport} />
         <SearchBar />
         <TimeRangePicker />
