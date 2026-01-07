@@ -75,21 +75,41 @@ export function LogViewer() {
     }
   }, [isFollowing, hasMore, isLoading, loadMore, pause, resume, userScrolled]);
 
-  // Auto-scroll to top when new entries arrive in follow mode
+  // Handle new entries in follow mode - reset virtualizer measurements and scroll to top
   useEffect(() => {
-    if (isFollowing && !isFollowPaused && entries.length > prevEntriesLengthRef.current) {
-      // New entries arrived - scroll to top if not paused
-      scrollToTop();
-    }
-    prevEntriesLengthRef.current = entries.length;
-  }, [entries.length, isFollowing, isFollowPaused, scrollToTop]);
+    const prevLength = prevEntriesLengthRef.current;
+    const newLength = entries.length;
 
-  // Reset user scrolled state when follow mode stops
+    if (isFollowing && newLength > prevLength) {
+      // New entries were prepended - measurements are now stale because indices shifted
+      // Reset the virtualizer's measurement cache
+      rowVirtualizer.measure();
+
+      // Scroll to top if not paused
+      if (!isFollowPaused) {
+        scrollToTop();
+      }
+    }
+    prevEntriesLengthRef.current = newLength;
+  }, [entries.length, isFollowing, isFollowPaused, scrollToTop, rowVirtualizer]);
+
+  // Reset user scrolled state and expanded rows when follow mode stops
   useEffect(() => {
     if (!isFollowing) {
       setUserScrolled(false);
+      setExpandedRows(new Set());
     }
   }, [isFollowing]);
+
+  // Clear expanded rows when entries change significantly (filter change)
+  const entriesRef = useRef(entries);
+  useEffect(() => {
+    // If entries array reference changed and we're not in follow mode, clear expanded rows
+    if (entriesRef.current !== entries && !isFollowing) {
+      setExpandedRows(new Set());
+    }
+    entriesRef.current = entries;
+  }, [entries, isFollowing]);
 
   if (error) {
     return (

@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useMemo } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { useFilterStore } from '../stores/filterStore';
 import { startFollow, stopFollow } from '../lib/tauri';
 import type { FollowEvent, FollowErrorEvent } from '../lib/types';
+
+// Helper to create a stable key from filter for comparison
+function getFilterKey(filter: any): string {
+  return JSON.stringify(filter);
+}
 
 // Global state to track if listeners are set up (singleton pattern)
 let listenersSetUp = false;
@@ -137,17 +142,21 @@ export function useFollowMode() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Restart follow mode when filter changes (to apply new filters)
-  const filterRef = useRef(filter);
+  // Use JSON stringification to detect actual filter changes (not reference changes)
+  const filterKey = useMemo(() => getFilterKey(filter), [filter]);
+  const filterKeyRef = useRef(filterKey);
+
   useEffect(() => {
     // Skip the initial render
     if (isFirstMount.current) {
       isFirstMount.current = false;
-      filterRef.current = filter;
+      filterKeyRef.current = filterKey;
       return;
     }
 
-    if (filterRef.current === filter) return;
-    filterRef.current = filter;
+    // Check if filter actually changed (deep comparison via JSON key)
+    if (filterKeyRef.current === filterKey) return;
+    filterKeyRef.current = filterKey;
 
     // If following, restart with the new filter
     if (isFollowing) {
@@ -157,7 +166,7 @@ export function useFollowMode() {
         setFollowing(false);
       });
     }
-  }, [filter, isFollowing, setError, setFollowing]);
+  }, [filter, filterKey, isFollowing, setError, setFollowing]);
 
   return {
     isFollowing,
