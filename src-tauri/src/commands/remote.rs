@@ -150,6 +150,19 @@ pub fn get_connection_state(
     })
 }
 
+/// Test the currently active connection without reconnecting
+#[tauri::command]
+pub fn test_current_connection(
+    conn_state: State<'_, ConnectionManagerState>,
+) -> Result<TestConnectionResult, JournalError> {
+    let manager = conn_state
+        .0
+        .lock()
+        .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
+    manager.test_connection()
+}
+
+/// Test connection to a host by creating a temporary connection
 #[tauri::command]
 pub async fn test_host_connection(
     host_id: String,

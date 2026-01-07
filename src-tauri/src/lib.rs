@@ -10,8 +10,9 @@ use commands::remote::{
     add_remote_host, connect_to_host, delete_remote_host, disconnect_from_host,
     get_connection_state, get_remote_host, get_remote_log_count, get_remote_statistics,
     is_remote_following, list_remote_boots, list_remote_hosts, list_remote_units,
-    query_remote_journal, start_remote_follow, stop_remote_follow, test_host_connection,
-    update_remote_host, ConnectionManagerState, HostStorageState, RemoteFollowerState,
+    query_remote_journal, start_remote_follow, stop_remote_follow, test_current_connection,
+    test_host_connection, update_remote_host, ConnectionManagerState, HostStorageState,
+    RemoteFollowerState,
 };
 use journal::{
     new_shared_connection_manager, new_shared_host_storage, JournalFollower,
@@ -52,6 +53,7 @@ pub fn run() {
             connect_to_host,
             disconnect_from_host,
             get_connection_state,
+            test_current_connection,
             test_host_connection,
             // Remote journal commands
             query_remote_journal,

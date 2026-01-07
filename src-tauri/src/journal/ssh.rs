@@ -264,12 +264,51 @@ impl ConnectionManager {
         }
     }
 
-    #[allow(dead_code)]
+    /// Test the current connection and check if journalctl is available
     pub fn test_connection(&self) -> Result<TestConnectionResult, JournalError> {
         match &self.connection {
             Some(conn) => Ok(conn.test()),
             None => Err(JournalError::NotConnected),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_connection_manager_new() {
+        let manager = ConnectionManager::new();
+        assert!(!manager.is_connected());
+        assert!(manager.current_host().is_none());
+    }
+
+    #[test]
+    fn test_connection_manager_default() {
+        let manager = ConnectionManager::default();
+        assert!(!manager.is_connected());
+    }
+
+    #[test]
+    fn test_connection_manager_not_connected_error() {
+        let manager = ConnectionManager::new();
+
+        // Should return NotConnected error when trying to run commands without connection
+        let result = manager.run_command("echo test");
+        assert!(matches!(result, Err(JournalError::NotConnected)));
+
+        // Should return NotConnected error when trying to test without connection
+        let result = manager.test_connection();
+        assert!(matches!(result, Err(JournalError::NotConnected)));
+    }
+
+    #[test]
+    fn test_connection_manager_disconnect() {
+        let mut manager = ConnectionManager::new();
+        // Disconnect should be safe to call even when not connected
+        manager.disconnect();
+        assert!(!manager.is_connected());
     }
 }
 
