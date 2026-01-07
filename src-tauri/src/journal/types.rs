@@ -38,7 +38,7 @@ fn default_port() -> u16 {
 }
 
 impl RemoteHost {
-    #[allow(dead_code)]
+    /// Create a new RemoteHost with default settings (port 22, agent auth, no sudo)
     pub fn new(name: String, hostname: String, username: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),
@@ -50,6 +50,47 @@ impl RemoteHost {
             key_path: None,
             sudo_required: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remote_host_new_defaults() {
+        let host = RemoteHost::new(
+            "test-server".to_string(),
+            "192.168.1.100".to_string(),
+            "admin".to_string(),
+        );
+
+        assert_eq!(host.name, "test-server");
+        assert_eq!(host.hostname, "192.168.1.100");
+        assert_eq!(host.username, "admin");
+        assert_eq!(host.port, 22);
+        assert_eq!(host.auth_method, AuthMethod::Agent);
+        assert!(host.key_path.is_none());
+        assert!(!host.sudo_required);
+        assert!(!host.id.is_empty());
+    }
+
+    #[test]
+    fn test_auth_method_default() {
+        assert_eq!(AuthMethod::default(), AuthMethod::Agent);
+    }
+
+    #[test]
+    fn test_connection_status_default() {
+        assert_eq!(ConnectionStatus::default(), ConnectionStatus::Disconnected);
+    }
+
+    #[test]
+    fn test_connection_state_default() {
+        let state = ConnectionState::default();
+        assert!(state.host_id.is_none());
+        assert_eq!(state.status, ConnectionStatus::Disconnected);
+        assert!(state.error_message.is_none());
     }
 }
 
