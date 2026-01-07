@@ -10,6 +10,7 @@ export function useJournalLogs() {
     error,
     hasMore,
     cursorEnd,
+    isFollowing,
     setEntries,
     appendEntries,
     setLoading,
@@ -64,8 +65,13 @@ export function useJournalLogs() {
     fetchLogs(false);
   }, [fetchLogs]);
 
-  // Debounced fetch when filter changes
+  // Debounced fetch when filter changes (skip if in follow mode)
   useEffect(() => {
+    // Don't fetch when in follow mode - the follow mode handles its own data
+    if (isFollowing) {
+      return;
+    }
+
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -79,7 +85,7 @@ export function useJournalLogs() {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filter, isFollowing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return {
     entries,
