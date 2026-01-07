@@ -100,4 +100,22 @@ export default defineConfig(async () => ({
     // Use faster JSX transform
     jsxInject: undefined,
   },
+
+  test: {
+    environment: "jsdom",
+    setupFiles: "./vitest.setup.ts",
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "json-summary"],
+      reportsDirectory: "coverage",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: [
+        "src/main.tsx",
+        "src/App.tsx",
+        "src/components/**",
+        "src/hooks/**",
+        "src-tauri/**",
+      ],
+    },
+  },
 }));
