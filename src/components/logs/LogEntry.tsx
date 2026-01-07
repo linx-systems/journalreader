@@ -11,7 +11,7 @@ interface LogEntryProps {
   entry: JournalEntry;
   searchPattern?: string;
   isExpanded: boolean;
-  onToggleExpand: () => void;
+  onToggleExpand: (cursor: string) => void;
 }
 
 function highlightText(text: string, pattern?: string): React.ReactNode {
@@ -47,6 +47,7 @@ const PRIORITY_CSS_CLASSES: Record<number, string> = {
 };
 
 export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isExpanded, onToggleExpand }: LogEntryProps) {
+  const handleToggle = () => onToggleExpand(entry.cursor);
   const [copied, setCopied] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const { filter, setFilter } = useFilterStore();
@@ -120,7 +121,7 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
     >
       <div
         className="flex items-start gap-2 px-3 py-2 cursor-pointer"
-        onClick={onToggleExpand}
+        onClick={handleToggle}
       >
         <button className="mt-1 text-theme-secondary">
           {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -240,4 +241,8 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
       )}
     </div>
   );
+}, (prev, next) => {
+  return prev.entry.cursor === next.entry.cursor
+    && prev.isExpanded === next.isExpanded
+    && prev.searchPattern === next.searchPattern;
 });

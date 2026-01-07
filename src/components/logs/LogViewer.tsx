@@ -1,10 +1,18 @@
-import { useRef, useCallback, useState, useEffect } from 'react';
+import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
 import { LogEntryRow } from './LogEntry';
 import { Loader2, AlertCircle, FileSearch, ArrowDown } from 'lucide-react';
+
+// Consolidated viewer state to reduce ref fragmentation
+interface ViewerState {
+  prevEntriesLength: number;
+  isScrolling: boolean;
+  anchor: { cursor: string; offset: number } | null;
+  lastExpandedCursor: string | null;
+}
 
 export function LogViewer() {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -13,16 +21,21 @@ export function LogViewer() {
   const { pause, resume } = useFollowMode();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [userScrolled, setUserScrolled] = useState(false);
-  const prevEntriesLengthRef = useRef(entries.length);
-  const isScrollingRef = useRef(false);
-  const anchorRef = useRef<{ cursor: string; offset: number } | null>(null);
-  const lastExpandedCursorRef = useRef<string | null>(null);
+
+  // Consolidated state ref for scroll/anchor management
+  const viewerState = useRef<ViewerState>({
+    prevEntriesLength: entries.length,
+    isScrolling: false,
+    anchor: null,
+    lastExpandedCursor: null,
+  });
+
+  // Keep entries ref for getItemKey (needs current entries without causing re-render)
   const entriesRef = useRef(entries);
-  const entriesKeyRef = useRef(entries);
-  entriesKeyRef.current = entries;
+  entriesRef.current = entries;
 
   const getItemKey = useCallback((index: number) => {
-    return entriesKeyRef.current[index]?.cursor ?? index;
+    return entriesRef.current[index]?.cursor ?? index;
   }, []);
 
   const rowVirtualizer = useVirtualizer({
@@ -37,7 +50,7 @@ export function LogViewer() {
   const updateAnchor = useCallback((preferredCursor?: string) => {
     if (!parentRef.current) return;
     const parent = parentRef.current;
-    const preferred = preferredCursor ?? anchorRef.current?.cursor;
+    const preferred = preferredCursor ?? viewerState.current.anchor?.cursor;
     let cursor = preferred;
     let anchorEl: HTMLElement | null = null;
 
@@ -60,95 +73,134 @@ export function LogViewer() {
     if (!anchorEl || !cursor) return;
     const parentRect = parent.getBoundingClientRect();
     const anchorRect = anchorEl.getBoundingClientRect();
-    anchorRef.current = {
+    viewerState.current.anchor = {
       cursor,
       offset: anchorRect.top - parentRect.top,
     };
   }, [entries, rowVirtualizer]);
 
+  // Store these in refs so handleToggleExpand can access current values without re-creating
+  const isFollowingRef = useRef(isFollowing);
+  const userScrolledRef = useRef(userScrolled);
+  isFollowingRef.current = isFollowing;
+  userScrolledRef.current = userScrolled;
+
   const handleToggleExpand = useCallback((cursor: string) => {
-    updateAnchor(cursor);
+    // Inline anchor update to avoid dependency on updateAnchor
+    if (parentRef.current) {
+      const parent = parentRef.current;
+      const anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
+      if (anchorEl) {
+        const parentRect = parent.getBoundingClientRect();
+        const anchorRect = anchorEl.getBoundingClientRect();
+        viewerState.current.anchor = {
+          cursor,
+          offset: anchorRect.top - parentRect.top,
+        };
+      }
+    }
+
     setExpandedRows((prev) => {
       const next = new Set(prev);
       if (next.has(cursor)) {
         next.delete(cursor);
       } else {
         next.add(cursor);
-        lastExpandedCursorRef.current = cursor;
+        viewerState.current.lastExpandedCursor = cursor;
       }
-      if (isFollowing) {
+      if (isFollowingRef.current) {
         if (next.size > 0) {
           pause();
-        } else if (!userScrolled) {
+        } else if (!userScrolledRef.current) {
           resume();
-          lastExpandedCursorRef.current = null;
+          viewerState.current.lastExpandedCursor = null;
         }
       }
       return next;
     });
-  }, [isFollowing, pause, resume, updateAnchor, userScrolled]);
+  }, [pause, resume]);
 
   // Scroll to top (where newest entries appear in follow mode)
   const scrollToTop = useCallback(() => {
     if (!parentRef.current) return;
-    isScrollingRef.current = true;
+    viewerState.current.isScrolling = true;
     parentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     setTimeout(() => {
-      isScrollingRef.current = false;
+      viewerState.current.isScrolling = false;
     }, 500);
   }, []);
 
-  const handleScroll = useCallback(() => {
-    if (!parentRef.current) return;
-
-    const { scrollTop } = parentRef.current;
-
-    // Handle follow mode scroll behavior
-    if (isFollowing && !isScrollingRef.current) {
-      const atTop = scrollTop < 50;
-
-      if (!atTop && !userScrolled) {
-        // User scrolled away from top - pause follow mode
-        setUserScrolled(true);
-        pause();
-      } else if (atTop && userScrolled) {
-        // User scrolled back to top - resume follow mode
-        setUserScrolled(false);
-        resume();
-      }
-    }
-
-    // No automatic load more on scroll - user clicks the button instead
-    // This prevents scroll position issues and infinite loading loops
-
-    if (isFollowing && (isFollowPaused || expandedRows.size > 0)) {
-      updateAnchor(lastExpandedCursorRef.current ?? undefined);
-    } else if (!isFollowing || (!isFollowPaused && expandedRows.size === 0)) {
-      anchorRef.current = null;
-    }
-  }, [
+  // Store scroll handler deps in refs to avoid recreating debounced function
+  const scrollDepsRef = useRef({
     isFollowing,
     isFollowPaused,
-    expandedRows.size,
-    pause,
-    resume,
-    updateAnchor,
+    expandedRowsSize: expandedRows.size,
     userScrolled,
-  ]);
+  });
+  scrollDepsRef.current = {
+    isFollowing,
+    isFollowPaused,
+    expandedRowsSize: expandedRows.size,
+    userScrolled,
+  };
+
+  const handleScroll = useMemo(() => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const scrollHandler = () => {
+      if (!parentRef.current) return;
+
+      const { scrollTop } = parentRef.current;
+      const { isFollowing, isFollowPaused, expandedRowsSize, userScrolled } = scrollDepsRef.current;
+
+      // Handle follow mode scroll behavior
+      if (isFollowing && !viewerState.current.isScrolling) {
+        const atTop = scrollTop < 50;
+
+        if (!atTop && !userScrolled) {
+          // User scrolled away from top - pause follow mode
+          setUserScrolled(true);
+          pause();
+        } else if (atTop && userScrolled) {
+          // User scrolled back to top - resume follow mode
+          setUserScrolled(false);
+          resume();
+        }
+      }
+
+      // No automatic load more on scroll - user clicks the button instead
+      // This prevents scroll position issues and infinite loading loops
+
+      if (isFollowing && (isFollowPaused || expandedRowsSize > 0)) {
+        updateAnchor(viewerState.current.lastExpandedCursor ?? undefined);
+      } else if (!isFollowing || (!isFollowPaused && expandedRowsSize === 0)) {
+        viewerState.current.anchor = null;
+      }
+    };
+
+    // Debounced wrapper (~60fps)
+    return () => {
+      if (timeoutId) return; // Skip if already scheduled
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
+        scrollHandler();
+      }, 16);
+    };
+  }, [pause, resume, updateAnchor]);
 
   // Handle new entries in follow mode - scroll to top or maintain anchor position
   useEffect(() => {
-    const prevLength = prevEntriesLengthRef.current;
+    const prevLength = viewerState.current.prevEntriesLength;
     const newLength = entries.length;
 
     if (isFollowing && newLength > prevLength) {
       // Follow mode: scroll to top if not paused and no rows are expanded
       if (!isFollowPaused && expandedRows.size === 0) {
         scrollToTop();
-        anchorRef.current = null;
-      } else if (parentRef.current && anchorRef.current) {
+        viewerState.current.anchor = null;
+      } else if (parentRef.current && viewerState.current.anchor) {
         const parent = parentRef.current;
-        const anchor = anchorRef.current;
+        const anchor = viewerState.current.anchor;
         const anchorEl = parent.querySelector(`[data-cursor="${anchor.cursor}"]`);
         if (anchorEl) {
           const parentRect = parent.getBoundingClientRect();
@@ -161,7 +213,7 @@ export function LogViewer() {
         }
       }
     }
-    prevEntriesLengthRef.current = newLength;
+    viewerState.current.prevEntriesLength = newLength;
   }, [entries, entries.length, expandedRows.size, isFollowing, isFollowPaused, scrollToTop]);
 
   // Reset user scrolled state and expanded rows when follow mode stops
@@ -296,7 +348,7 @@ export function LogViewer() {
                       entry={entry}
                       searchPattern={filter.grepPattern}
                       isExpanded={isExpanded}
-                      onToggleExpand={() => handleToggleExpand(entry.cursor)}
+                      onToggleExpand={handleToggleExpand}
                     />
                   </div>
                 );
