@@ -1,7 +1,8 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useFilterStore } from '../stores/filterStore';
 import { useStatisticsStore } from '../stores/statisticsStore';
-import { getStatistics } from '../lib/tauri';
+import { useConnectionStore } from '../stores/connectionStore';
+import { getStatistics, getRemoteStatistics } from '../lib/tauri';
 import { computeGranularityMs } from '../lib/statistics';
 
 export function useStatistics() {
@@ -17,6 +18,11 @@ export function useStatistics() {
     setError,
   } = useStatisticsStore();
 
+  const { connectedHostId, connectionStatus } = useConnectionStore();
+  const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
+  const isRemoteRef = useRef(isRemote);
+  isRemoteRef.current = isRemote;
+
   const fetchStatistics = useCallback(async () => {
     if (viewMode !== 'statistics') return;
 
@@ -30,7 +36,7 @@ export function useStatistics() {
         filter.until
       );
 
-      const result = await getStatistics({
+      const request = {
         units: filter.units,
         excludedUnits: filter.excludedUnits,
         priorities: filter.priorities,
@@ -42,7 +48,11 @@ export function useStatistics() {
         bootOffset: filter.bootOffset,
         identifier: filter.identifier,
         granularityMs,
-      });
+      };
+
+      const result = isRemoteRef.current
+        ? await getRemoteStatistics(request)
+        : await getStatistics(request);
 
       setStatistics(result);
     } catch (err) {

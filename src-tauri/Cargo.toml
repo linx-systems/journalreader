@@ -22,3 +22,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 thiserror = "1"
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
+# SSH support for remote log viewing
+ssh2 = "0.9"
+uuid = { version = "1", features = ["v4", "serde"] }
+dirs = "5"

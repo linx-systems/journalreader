@@ -160,3 +160,41 @@ export interface JournalStatistics {
   totalCount: number;
   errorRate: number;
 }
+
+// Remote host types
+export type AuthMethod = 'password' | 'key' | 'agent';
+
+export interface RemoteHost {
+  id: string;
+  name: string;
+  hostname: string;
+  port: number;
+  username: string;
+  authMethod: AuthMethod;
+  keyPath?: string;
+  sudoRequired: boolean;
+}
+
+export interface RemoteHostInput {
+  name: string;
+  hostname: string;
+  port: number;
+  username: string;
+  authMethod: AuthMethod;
+  keyPath?: string;
+  sudoRequired: boolean;
+}
+
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface ConnectionState {
+  hostId: string | null;
+  status: ConnectionStatus;
+  errorMessage: string | null;
+}
+
+export interface TestConnectionResult {
+  success: boolean;
+  message: string;
+  journalctlAvailable: boolean;
+}

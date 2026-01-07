@@ -19,6 +19,25 @@ pub enum JournalError {
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+
+    // SSH-related errors
+    #[error("SSH connection failed: {0}")]
+    SshConnectionError(String),
+
+    #[error("SSH authentication failed: {0}")]
+    SshAuthError(String),
+
+    #[error("SSH command execution failed: {0}")]
+    SshExecError(String),
+
+    #[error("Not connected to any remote host")]
+    NotConnected,
+
+    #[error("Remote host not found: {0}")]
+    HostNotFound(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
 
 impl serde::Serialize for JournalError {

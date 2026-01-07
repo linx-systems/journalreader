@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { listUnits, listBoots } from '../lib/tauri';
+import { useEffect, useState, useCallback } from 'react';
+import { listUnits, listBoots, listRemoteUnits, listRemoteBoots } from '../lib/tauri';
+import { useConnectionStore } from '../stores/connectionStore';
 import type { SystemUnit, BootInfo } from '../lib/types';
 
 export function useUnits() {
@@ -7,24 +8,27 @@ export function useUnits() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchUnits() {
-      try {
-        setIsLoading(true);
-        const result = await listUnits();
-        setUnits(result);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setIsLoading(false);
-      }
+  const { connectedHostId, connectionStatus } = useConnectionStore();
+  const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
+
+  const fetchUnits = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const result = isRemote ? await listRemoteUnits() : await listUnits();
+      setUnits(result);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
     }
+  }, [isRemote]);
 
+  useEffect(() => {
     fetchUnits();
-  }, []);
+  }, [fetchUnits]);
 
-  return { units, isLoading, error };
+  return { units, isLoading, error, refresh: fetchUnits };
 }
 
 export function useBoots() {
@@ -32,10 +36,13 @@ export function useBoots() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchBoots = async () => {
+  const { connectedHostId, connectionStatus } = useConnectionStore();
+  const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
+
+  const fetchBoots = useCallback(async () => {
     try {
       setIsLoading(true);
-      const result = await listBoots();
+      const result = isRemote ? await listRemoteBoots() : await listBoots();
       setBoots(result);
       setError(null);
     } catch (err) {
@@ -43,15 +50,11 @@ export function useBoots() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [isRemote]);
 
   useEffect(() => {
     fetchBoots();
-  }, []);
+  }, [fetchBoots]);
 
-  const refresh = () => {
-    fetchBoots();
-  };
-
-  return { boots, isLoading, error, refresh };
+  return { boots, isLoading, error, refresh: fetchBoots };
 }

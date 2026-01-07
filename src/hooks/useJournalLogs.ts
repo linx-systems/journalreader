@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useFilterStore } from '../stores/filterStore';
-import { queryJournal } from '../lib/tauri';
+import { useConnectionStore } from '../stores/connectionStore';
+import { queryJournal, queryRemoteJournal } from '../lib/tauri';
 
 export function useJournalLogs() {
   const {
@@ -19,13 +20,18 @@ export function useJournalLogs() {
     setCursorEnd,
   } = useFilterStore();
 
+  const { connectedHostId, connectionStatus } = useConnectionStore();
+  const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
+
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Use refs to access current values without causing effect re-runs
   const filterRef = useRef(filter);
   const cursorEndRef = useRef(cursorEnd);
+  const isRemoteRef = useRef(isRemote);
   filterRef.current = filter;
   cursorEndRef.current = cursorEnd;
+  isRemoteRef.current = isRemote;
 
   const fetchLogs = useCallback(async (append = false) => {
     // Cancel any pending request
@@ -44,7 +50,10 @@ export function useJournalLogs() {
         ? { ...currentFilter, afterCursor: currentCursorEnd }
         : currentFilter;
 
-      const result = await queryJournal(filterToUse);
+      // Use remote or local query based on connection state
+      const result = isRemoteRef.current
+        ? await queryRemoteJournal(filterToUse)
+        : await queryJournal(filterToUse);
 
       if (append) {
         appendEntries(result.entries);
@@ -76,6 +85,19 @@ export function useJournalLogs() {
   const wasFollowingRef = useRef(isFollowing);
   // Track the filter for comparison (to detect actual filter changes)
   const prevFilterRef = useRef(filter);
+  // Track connection state to refresh when it changes
+  const prevIsRemoteRef = useRef(isRemote);
+
+  // Refresh when connection state changes
+  useEffect(() => {
+    if (prevIsRemoteRef.current !== isRemote) {
+      prevIsRemoteRef.current = isRemote;
+      // Clear entries and fetch fresh data from the new source
+      setEntries([]);
+      setCursorEnd(null);
+      fetchLogs(false);
+    }
+  }, [isRemote, setEntries, setCursorEnd, fetchLogs]);
 
   // Debounced fetch when filter changes (skip if in follow mode)
   useEffect(() => {

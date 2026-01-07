@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useMemo } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { useFilterStore } from '../stores/filterStore';
-import { startFollow, stopFollow } from '../lib/tauri';
+import { useConnectionStore } from '../stores/connectionStore';
+import {
+  startFollow,
+  stopFollow,
+  startRemoteFollow,
+  stopRemoteFollow,
+} from '../lib/tauri';
 import type { FollowEvent, FollowErrorEvent } from '../lib/types';
 
 // Helper to create a stable key from filter for comparison
@@ -76,6 +82,15 @@ export function useFollowMode() {
     setError,
   } = useFilterStore();
 
+  const { connectedHostId, connectionStatus, sessionPassword } = useConnectionStore();
+  const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
+
+  // Use refs to track state in callbacks without re-creating them
+  const isRemoteRef = useRef(isRemote);
+  const sessionPasswordRef = useRef(sessionPassword);
+  isRemoteRef.current = isRemote;
+  sessionPasswordRef.current = sessionPassword;
+
   const isFirstMount = useRef(true);
 
   // Start follow mode
@@ -84,8 +99,12 @@ export function useFollowMode() {
       // Set up listeners if not already done
       await setupListeners(prependEntries, setError, setFollowing);
 
-      // Start the follow process in Rust
-      await startFollow(filter);
+      // Start the follow process in Rust (remote or local)
+      if (isRemoteRef.current) {
+        await startRemoteFollow(filter, sessionPasswordRef.current ?? undefined);
+      } else {
+        await startFollow(filter);
+      }
       setFollowing(true);
       setFollowPaused(false);
     } catch (err) {
@@ -98,7 +117,11 @@ export function useFollowMode() {
   // Stop follow mode
   const stop = useCallback(async () => {
     try {
-      await stopFollow();
+      // Stop both local and remote - only the active one will actually do anything
+      await Promise.all([
+        stopFollow().catch(() => {}),
+        stopRemoteFollow().catch(() => {}),
+      ]);
     } catch (err) {
       console.error('Failed to stop follow:', err);
     }
@@ -136,6 +159,7 @@ export function useFollowMode() {
       // Only cleanup if we're actually following
       if (isFollowing) {
         stopFollow().catch(console.error);
+        stopRemoteFollow().catch(console.error);
         cleanupListeners();
       }
     };
@@ -160,7 +184,11 @@ export function useFollowMode() {
 
     // If following, restart with the new filter
     if (isFollowing) {
-      startFollow(filter).catch((err) => {
+      const startFn = isRemoteRef.current
+        ? () => startRemoteFollow(filter, sessionPasswordRef.current ?? undefined)
+        : () => startFollow(filter);
+
+      startFn().catch((err) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(`Failed to update follow filter: ${errorMessage}`);
         setFollowing(false);

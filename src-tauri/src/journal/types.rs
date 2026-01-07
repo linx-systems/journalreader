@@ -1,4 +1,117 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// Authentication method for SSH connections
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMethod {
+    Password,
+    Key,
+    Agent,
+}
+
+impl Default for AuthMethod {
+    fn default() -> Self {
+        AuthMethod::Agent
+    }
+}
+
+/// Remote host configuration for SSH connections
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteHost {
+    pub id: String,
+    pub name: String,
+    pub hostname: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    pub username: String,
+    #[serde(default)]
+    pub auth_method: AuthMethod,
+    pub key_path: Option<String>,
+    #[serde(default)]
+    pub sudo_required: bool,
+}
+
+fn default_port() -> u16 {
+    22
+}
+
+impl RemoteHost {
+    #[allow(dead_code)]
+    pub fn new(name: String, hostname: String, username: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            name,
+            hostname,
+            port: 22,
+            username,
+            auth_method: AuthMethod::Agent,
+            key_path: None,
+            sudo_required: false,
+        }
+    }
+}
+
+/// Request to create or update a remote host
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteHostInput {
+    pub name: String,
+    pub hostname: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    pub username: String,
+    #[serde(default)]
+    pub auth_method: AuthMethod,
+    pub key_path: Option<String>,
+    #[serde(default)]
+    pub sudo_required: bool,
+}
+
+/// Connection status for a remote host
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionStatus {
+    Disconnected,
+    Connecting,
+    Connected,
+    Error,
+}
+
+impl Default for ConnectionStatus {
+    fn default() -> Self {
+        ConnectionStatus::Disconnected
+    }
+}
+
+/// Connection state information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionState {
+    pub host_id: Option<String>,
+    pub status: ConnectionStatus,
+    pub error_message: Option<String>,
+}
+
+impl Default for ConnectionState {
+    fn default() -> Self {
+        Self {
+            host_id: None,
+            status: ConnectionStatus::Disconnected,
+            error_message: None,
+        }
+    }
+}
+
+/// Test connection result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestConnectionResult {
+    pub success: bool,
+    pub message: String,
+    pub journalctl_available: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

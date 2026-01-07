@@ -13,6 +13,7 @@ import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
 import { useStatisticsStore } from '../../stores/statisticsStore';
+import { HostSelector } from '../remote/HostSelector';
 import { useState, useEffect } from 'react';
 import clsx from 'clsx';
 
@@ -81,6 +82,9 @@ export function Toolbar() {
   return (
     <div className="flex items-center justify-between px-4 py-2 bg-theme border-b border-theme">
       <div className="flex items-center gap-4">
+        {/* Host Selector */}
+        <HostSelector />
+
         {/* View Mode Toggle */}
         <div className="flex items-center border border-theme rounded-lg overflow-hidden">
           <button
