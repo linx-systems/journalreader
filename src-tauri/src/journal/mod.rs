@@ -1,5 +1,6 @@
 pub mod follower;
 pub mod hosts;
+pub(crate) mod parser;
 pub mod reader;
 pub mod remote_follower;
 pub mod remote_reader;

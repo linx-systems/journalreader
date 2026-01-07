@@ -1,7 +1,8 @@
 use crate::error::JournalError;
+use crate::journal::parser::{get_priority, get_timestamp, parse_entry};
 use crate::journal::types::{
-    BootInfo, JournalEntry, JournalFilter, JournalQueryResult, JournalStatistics, PriorityCount,
-    ServiceCount, StatisticsRequest, SystemUnit, TimeseriesPoint,
+    BootInfo, JournalFilter, JournalQueryResult, JournalStatistics, PriorityCount, ServiceCount,
+    StatisticsRequest, SystemUnit, TimeseriesPoint,
 };
 use regex::Regex;
 use serde_json::Value;
@@ -110,7 +111,7 @@ impl JournalReader {
                 continue;
             }
 
-            match Self::parse_entry(line) {
+            match parse_entry(line) {
                 Ok(entry) => {
                     // Filter out excluded units
                     if !filter.excluded_units.is_empty() {
@@ -285,107 +286,6 @@ impl JournalReader {
         Ok(boots)
     }
 
-    fn parse_entry(json_line: &str) -> Result<JournalEntry, JournalError> {
-        let value: Value =
-            serde_json::from_str(json_line).map_err(|e| JournalError::ParseError(e.to_string()))?;
-
-        let cursor = Self::get_string(&value, "__CURSOR").unwrap_or_default();
-        let realtime_timestamp = Self::get_timestamp(&value, "__REALTIME_TIMESTAMP");
-        let monotonic_timestamp = Self::get_optional_timestamp(&value, "__MONOTONIC_TIMESTAMP");
-        let boot_id = Self::get_string(&value, "_BOOT_ID").unwrap_or_default();
-
-        let message = Self::get_string(&value, "MESSAGE").unwrap_or_default();
-        let priority = Self::get_priority(&value);
-
-        let syslog_identifier = Self::get_string(&value, "SYSLOG_IDENTIFIER");
-        let systemd_unit = Self::get_string(&value, "_SYSTEMD_UNIT");
-        let pid = Self::get_u32(&value, "_PID");
-        let uid = Self::get_u32(&value, "_UID");
-        let gid = Self::get_u32(&value, "_GID");
-        let exe = Self::get_string(&value, "_EXE");
-        let cmdline = Self::get_string(&value, "_CMDLINE");
-        let hostname = Self::get_string(&value, "_HOSTNAME");
-        let comm = Self::get_string(&value, "_COMM");
-
-        Ok(JournalEntry {
-            cursor,
-            realtime_timestamp,
-            monotonic_timestamp,
-            boot_id,
-            message,
-            priority,
-            syslog_identifier,
-            systemd_unit,
-            pid,
-            uid,
-            gid,
-            exe,
-            cmdline,
-            hostname,
-            comm,
-        })
-    }
-
-    fn get_string(value: &Value, key: &str) -> Option<String> {
-        value.get(key).and_then(|v| {
-            if let Some(s) = v.as_str() {
-                Some(s.to_string())
-            } else if let Some(arr) = v.as_array() {
-                // Sometimes journalctl returns arrays of bytes
-                let bytes: Vec<u8> = arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect();
-                String::from_utf8(bytes).ok()
-            } else {
-                None
-            }
-        })
-    }
-
-    fn get_timestamp(value: &Value, key: &str) -> i64 {
-        value
-            .get(key)
-            .and_then(|v| {
-                if let Some(s) = v.as_str() {
-                    s.parse::<i64>().ok()
-                } else {
-                    v.as_i64()
-                }
-            })
-            .unwrap_or(0)
-    }
-
-    fn get_optional_timestamp(value: &Value, key: &str) -> Option<i64> {
-        value.get(key).and_then(|v| {
-            if let Some(s) = v.as_str() {
-                s.parse::<i64>().ok()
-            } else {
-                v.as_i64()
-            }
-        })
-    }
-
-    fn get_priority(value: &Value) -> u8 {
-        value
-            .get("PRIORITY")
-            .and_then(|v| {
-                if let Some(s) = v.as_str() {
-                    s.parse::<u8>().ok()
-                } else {
-                    v.as_u64().map(|n| n as u8)
-                }
-            })
-            .unwrap_or(6) // Default to info
-    }
-
-    fn get_u32(value: &Value, key: &str) -> Option<u32> {
-        value.get(key).and_then(|v| {
-            if let Some(s) = v.as_str() {
-                s.parse::<u32>().ok()
-            } else {
-                v.as_u64().map(|n| n as u32)
-            }
-        })
-    }
-
     /// Get statistics by streaming journal entries to minimize memory usage.
     /// Instead of loading all entries into memory at once, processes entries
     /// line-by-line using streaming I/O.
@@ -495,13 +395,13 @@ impl JournalReader {
             total_count += 1;
 
             // Get timestamp and bucket it
-            let timestamp = Self::get_timestamp(&value, "__REALTIME_TIMESTAMP");
+            let timestamp = get_timestamp(&value, "__REALTIME_TIMESTAMP");
             // Convert from microseconds to milliseconds, then bucket
             let timestamp_ms = timestamp / 1000;
             let bucket = (timestamp_ms / granularity_ms) * granularity_ms;
 
             // Get priority
-            let priority = Self::get_priority(&value);
+            let priority = get_priority(&value);
             let is_error = priority <= 3; // emerg, alert, crit, err
             let is_warning = priority == 4;
 

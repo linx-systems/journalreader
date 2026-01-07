@@ -1,7 +1,7 @@
 use crate::error::JournalError;
+use crate::journal::parser::parse_entry;
 use crate::journal::types::{AuthMethod, JournalEntry, JournalFilter, RemoteHost};
 use regex::Regex;
-use serde_json::Value;
 use ssh2::Session;
 use std::io::Read;
 use std::net::TcpStream;
@@ -162,7 +162,7 @@ impl RemoteJournalFollower {
                             continue;
                         }
 
-                        match Self::parse_entry(&line) {
+                        match parse_entry(&line) {
                             Ok(entry) => {
                                 // Filter out excluded units
                                 if !excluded_units.is_empty() {
@@ -354,88 +354,6 @@ impl RemoteJournalFollower {
         } else {
             cmd
         }
-    }
-
-    fn parse_entry(json_line: &str) -> Result<JournalEntry, JournalError> {
-        let value: Value =
-            serde_json::from_str(json_line).map_err(|e| JournalError::ParseError(e.to_string()))?;
-
-        Ok(JournalEntry {
-            cursor: Self::get_string(&value, "__CURSOR").unwrap_or_default(),
-            realtime_timestamp: Self::get_timestamp(&value, "__REALTIME_TIMESTAMP"),
-            monotonic_timestamp: Self::get_optional_timestamp(&value, "__MONOTONIC_TIMESTAMP"),
-            boot_id: Self::get_string(&value, "_BOOT_ID").unwrap_or_default(),
-            message: Self::get_string(&value, "MESSAGE").unwrap_or_default(),
-            priority: Self::get_priority(&value),
-            syslog_identifier: Self::get_string(&value, "SYSLOG_IDENTIFIER"),
-            systemd_unit: Self::get_string(&value, "_SYSTEMD_UNIT"),
-            pid: Self::get_u32(&value, "_PID"),
-            uid: Self::get_u32(&value, "_UID"),
-            gid: Self::get_u32(&value, "_GID"),
-            exe: Self::get_string(&value, "_EXE"),
-            cmdline: Self::get_string(&value, "_CMDLINE"),
-            hostname: Self::get_string(&value, "_HOSTNAME"),
-            comm: Self::get_string(&value, "_COMM"),
-        })
-    }
-
-    fn get_string(value: &Value, key: &str) -> Option<String> {
-        value.get(key).and_then(|v| {
-            if let Some(s) = v.as_str() {
-                Some(s.to_string())
-            } else if let Some(arr) = v.as_array() {
-                let bytes: Vec<u8> = arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect();
-                String::from_utf8(bytes).ok()
-            } else {
-                None
-            }
-        })
-    }
-
-    fn get_timestamp(value: &Value, key: &str) -> i64 {
-        value
-            .get(key)
-            .and_then(|v| {
-                if let Some(s) = v.as_str() {
-                    s.parse::<i64>().ok()
-                } else {
-                    v.as_i64()
-                }
-            })
-            .unwrap_or(0)
-    }
-
-    fn get_optional_timestamp(value: &Value, key: &str) -> Option<i64> {
-        value.get(key).and_then(|v| {
-            if let Some(s) = v.as_str() {
-                s.parse::<i64>().ok()
-            } else {
-                v.as_i64()
-            }
-        })
-    }
-
-    fn get_priority(value: &Value) -> u8 {
-        value
-            .get("PRIORITY")
-            .and_then(|v| {
-                if let Some(s) = v.as_str() {
-                    s.parse::<u8>().ok()
-                } else {
-                    v.as_u64().map(|n| n as u8)
-                }
-            })
-            .unwrap_or(6)
-    }
-
-    fn get_u32(value: &Value, key: &str) -> Option<u32> {
-        value.get(key).and_then(|v| {
-            if let Some(s) = v.as_str() {
-                s.parse::<u32>().ok()
-            } else {
-                v.as_u64().map(|n| n as u32)
-            }
-        })
     }
 
     fn stop_internal(&mut self) {

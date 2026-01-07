@@ -1,7 +1,7 @@
 use crate::error::JournalError;
+use crate::journal::parser::parse_entry;
 use crate::journal::types::{JournalEntry, JournalFilter};
 use regex::Regex;
-use serde_json::Value;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -214,105 +214,4 @@ impl Drop for JournalFollower {
     fn drop(&mut self) {
         self.stop();
     }
-}
-
-// Helper functions for parsing (duplicated from reader.rs to avoid circular deps)
-fn parse_entry(json_line: &str) -> Result<JournalEntry, JournalError> {
-    let value: Value =
-        serde_json::from_str(json_line).map_err(|e| JournalError::ParseError(e.to_string()))?;
-
-    let cursor = get_string(&value, "__CURSOR").unwrap_or_default();
-    let realtime_timestamp = get_timestamp(&value, "__REALTIME_TIMESTAMP");
-    let monotonic_timestamp = get_optional_timestamp(&value, "__MONOTONIC_TIMESTAMP");
-    let boot_id = get_string(&value, "_BOOT_ID").unwrap_or_default();
-
-    let message = get_string(&value, "MESSAGE").unwrap_or_default();
-    let priority = get_priority(&value);
-
-    let syslog_identifier = get_string(&value, "SYSLOG_IDENTIFIER");
-    let systemd_unit = get_string(&value, "_SYSTEMD_UNIT");
-    let pid = get_u32(&value, "_PID");
-    let uid = get_u32(&value, "_UID");
-    let gid = get_u32(&value, "_GID");
-    let exe = get_string(&value, "_EXE");
-    let cmdline = get_string(&value, "_CMDLINE");
-    let hostname = get_string(&value, "_HOSTNAME");
-    let comm = get_string(&value, "_COMM");
-
-    Ok(JournalEntry {
-        cursor,
-        realtime_timestamp,
-        monotonic_timestamp,
-        boot_id,
-        message,
-        priority,
-        syslog_identifier,
-        systemd_unit,
-        pid,
-        uid,
-        gid,
-        exe,
-        cmdline,
-        hostname,
-        comm,
-    })
-}
-
-fn get_string(value: &Value, key: &str) -> Option<String> {
-    value.get(key).and_then(|v| {
-        if let Some(s) = v.as_str() {
-            Some(s.to_string())
-        } else if let Some(arr) = v.as_array() {
-            let bytes: Vec<u8> = arr.iter().filter_map(|x| x.as_u64().map(|n| n as u8)).collect();
-            String::from_utf8(bytes).ok()
-        } else {
-            None
-        }
-    })
-}
-
-fn get_timestamp(value: &Value, key: &str) -> i64 {
-    value
-        .get(key)
-        .and_then(|v| {
-            if let Some(s) = v.as_str() {
-                s.parse::<i64>().ok()
-            } else {
-                v.as_i64()
-            }
-        })
-        .unwrap_or(0)
-}
-
-fn get_optional_timestamp(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(|v| {
-        if let Some(s) = v.as_str() {
-            s.parse::<i64>().ok()
-        } else {
-            v.as_i64()
-        }
-    })
-}
-
-fn get_priority(value: &Value) -> u8 {
-    value
-        .get("PRIORITY")
-        .and_then(|v| {
-            if let Some(s) = v.as_str() {
-                s.parse::<u8>().ok()
-            } else {
-                v.as_u64().map(|n| n as u8)
-            }
-        })
-        .unwrap_or(6)
-}
-
-fn get_u32(value: &Value, key: &str) -> Option<u32> {
-    value.get(key).and_then(|v| {
-        if let Some(s) = v.as_str() {
-            s.parse::<u32>().ok()
-        } else {
-            v.as_u64().map(|n| n as u32)
-        }
-    })
 }
