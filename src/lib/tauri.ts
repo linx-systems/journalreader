@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { JournalFilter, JournalQueryResult, SystemUnit, BootInfo } from './types';
+import type {
+  JournalFilter,
+  JournalQueryResult,
+  SystemUnit,
+  BootInfo,
+  StatisticsRequest,
+  JournalStatistics,
+} from './types';
 
 export async function queryJournal(filter: JournalFilter): Promise<JournalQueryResult> {
   return invoke<JournalQueryResult>('query_journal', { filter });
@@ -27,4 +34,10 @@ export async function stopFollow(): Promise<void> {
 
 export async function isFollowing(): Promise<boolean> {
   return invoke<boolean>('is_following');
+}
+
+export async function getStatistics(
+  request: StatisticsRequest
+): Promise<JournalStatistics> {
+  return invoke<JournalStatistics>('get_statistics', { request });
 }

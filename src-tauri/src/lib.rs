@@ -3,8 +3,8 @@ mod error;
 mod journal;
 
 use commands::journal::{
-    get_log_count, is_following, list_boots, list_units, query_journal, start_follow, stop_follow,
-    FollowerState,
+    get_log_count, get_statistics, is_following, list_boots, list_units, query_journal,
+    start_follow, stop_follow, FollowerState,
 };
 use journal::JournalFollower;
 use std::sync::Mutex;
@@ -19,6 +19,7 @@ pub fn run() {
             list_units,
             list_boots,
             get_log_count,
+            get_statistics,
             start_follow,
             stop_follow,
             is_following

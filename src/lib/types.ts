@@ -117,3 +117,46 @@ export interface FollowEvent {
 export interface FollowErrorEvent {
   message: string;
 }
+
+// Statistics types
+export type TimeGranularity = 'auto' | '10min' | '1hour' | '6hour' | '1day' | '1week';
+
+export interface StatisticsRequest {
+  units: string[];
+  excludedUnits: string[];
+  priorities?: number[];
+  since?: string;
+  until?: string;
+  grepPattern?: string;
+  caseSensitive: boolean;
+  bootId?: string;
+  bootOffset?: number;
+  identifier?: string;
+  granularityMs: number;
+}
+
+export interface TimeseriesPoint {
+  timestamp: number;
+  count: number;
+  errorCount: number;
+  warningCount: number;
+}
+
+export interface PriorityCount {
+  priority: number;
+  label: string;
+  count: number;
+}
+
+export interface ServiceCount {
+  service: string;
+  count: number;
+}
+
+export interface JournalStatistics {
+  timeseries: TimeseriesPoint[];
+  priorityDistribution: PriorityCount[];
+  topServices: ServiceCount[];
+  totalCount: number;
+  errorRate: number;
+}

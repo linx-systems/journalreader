@@ -1,13 +1,26 @@
-import { RefreshCw, Download, FileJson, FileText, ArrowUp, ArrowDown, Radio } from 'lucide-react';
+import {
+  RefreshCw,
+  Download,
+  FileJson,
+  FileText,
+  ArrowUp,
+  ArrowDown,
+  Radio,
+  List,
+  BarChart2,
+} from 'lucide-react';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
+import { useStatisticsStore } from '../../stores/statisticsStore';
 import { useState, useEffect } from 'react';
+import clsx from 'clsx';
 
 export function Toolbar() {
   const { entries, isLoading, refresh } = useJournalLogs();
   const { filter, setFilter } = useFilterStore();
   const { isFollowing, isFollowPaused, toggle } = useFollowMode();
+  const { viewMode, setViewMode } = useStatisticsStore();
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   const toggleSortOrder = () => {
@@ -68,6 +81,37 @@ export function Toolbar() {
   return (
     <div className="flex items-center justify-between px-4 py-2 bg-theme border-b border-theme">
       <div className="flex items-center gap-4">
+        {/* View Mode Toggle */}
+        <div className="flex items-center border border-theme rounded-lg overflow-hidden">
+          <button
+            onClick={() => setViewMode('logs')}
+            className={clsx(
+              'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors',
+              viewMode === 'logs'
+                ? 'bg-theme-secondary text-theme'
+                : 'text-theme-secondary hover:text-theme hover:bg-theme-secondary/50'
+            )}
+          >
+            <List className="h-4 w-4" />
+            Logs
+          </button>
+          <button
+            onClick={() => setViewMode('statistics')}
+            disabled={isFollowing}
+            className={clsx(
+              'flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors',
+              viewMode === 'statistics'
+                ? 'bg-theme-secondary text-theme'
+                : 'text-theme-secondary hover:text-theme hover:bg-theme-secondary/50',
+              isFollowing && 'opacity-50 cursor-not-allowed'
+            )}
+            title={isFollowing ? 'Stop follow mode to view statistics' : 'View statistics'}
+          >
+            <BarChart2 className="h-4 w-4" />
+            Stats
+          </button>
+        </div>
+
         <span className="text-sm text-theme-secondary">
           {isLoading ? (
             'Loading...'

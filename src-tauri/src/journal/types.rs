@@ -80,3 +80,47 @@ pub struct BootInfo {
     pub last_entry: Option<i64>,
 }
 
+// Statistics types
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatisticsRequest {
+    #[serde(flatten)]
+    pub filter: JournalFilter,
+    pub granularity_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeseriesPoint {
+    pub timestamp: i64,
+    pub count: u64,
+    pub error_count: u64,
+    pub warning_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PriorityCount {
+    pub priority: u8,
+    pub label: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceCount {
+    pub service: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JournalStatistics {
+    pub timeseries: Vec<TimeseriesPoint>,
+    pub priority_distribution: Vec<PriorityCount>,
+    pub top_services: Vec<ServiceCount>,
+    pub total_count: u64,
+    pub error_rate: f64,
+}
+
