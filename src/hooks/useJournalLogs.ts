@@ -84,7 +84,8 @@ export function useJournalLogs() {
   // Track if we were previously in follow mode
   const wasFollowingRef = useRef(isFollowing);
   // Track the filter for comparison (to detect actual filter changes)
-  const prevFilterRef = useRef(filter);
+  // Initialize to null so the first render triggers an initial fetch
+  const prevFilterRef = useRef<typeof filter | null>(null);
   // Track connection state to refresh when it changes
   const prevIsRemoteRef = useRef(isRemote);
 
@@ -115,12 +116,21 @@ export function useJournalLogs() {
       return;
     }
 
+    // Check if this is the initial load (prevFilterRef is null)
+    const isInitialLoad = prevFilterRef.current === null;
+
     // Only fetch if filter actually changed (not just reference)
     const filterChanged = JSON.stringify(prevFilterRef.current) !== JSON.stringify(filter);
-    if (!filterChanged) {
+    if (!filterChanged && !isInitialLoad) {
       return;
     }
     prevFilterRef.current = filter;
+
+    // On initial load, fetch immediately without debounce
+    if (isInitialLoad) {
+      fetchLogs(false);
+      return;
+    }
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
