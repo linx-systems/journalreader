@@ -65,8 +65,19 @@ export function useJournalLogs() {
     fetchLogs(false);
   }, [fetchLogs]);
 
+  // Track if we were previously in follow mode
+  const wasFollowingRef = useRef(isFollowing);
+
   // Debounced fetch when filter changes (skip if in follow mode)
   useEffect(() => {
+    // If we just exited follow mode, fetch immediately
+    if (wasFollowingRef.current && !isFollowing) {
+      wasFollowingRef.current = false;
+      fetchLogs(false);
+      return;
+    }
+    wasFollowingRef.current = isFollowing;
+
     // Don't fetch when in follow mode - the follow mode handles its own data
     if (isFollowing) {
       return;
@@ -85,7 +96,7 @@ export function useJournalLogs() {
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [filter, isFollowing]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filter, isFollowing, fetchLogs]);
 
   return {
     entries,
