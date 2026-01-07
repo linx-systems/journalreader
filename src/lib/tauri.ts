@@ -16,3 +16,15 @@ export async function listBoots(): Promise<BootInfo[]> {
 export async function getLogCount(filter: JournalFilter): Promise<number> {
   return invoke<number>('get_log_count', { filter });
 }
+
+export async function startFollow(filter: JournalFilter): Promise<void> {
+  return invoke<void>('start_follow', { filter });
+}
+
+export async function stopFollow(): Promise<void> {
+  return invoke<void>('stop_follow');
+}
+
+export async function isFollowing(): Promise<boolean> {
+  return invoke<boolean>('is_following');
+}

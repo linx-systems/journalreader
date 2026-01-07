@@ -1,46 +1,193 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
+import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
 import { LogEntryRow } from './LogEntry';
-import { Loader2, AlertCircle, FileSearch } from 'lucide-react';
+import { Loader2, AlertCircle, FileSearch, ArrowDown } from 'lucide-react';
 
 export function LogViewer() {
   const parentRef = useRef<HTMLDivElement>(null);
   const { entries, isLoading, error, hasMore, loadMore } = useJournalLogs();
-  const { filter } = useFilterStore();
+  const { filter, isFollowing, isFollowPaused } = useFilterStore();
+  const { pause, resume } = useFollowMode();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [userScrolled, setUserScrolled] = useState(false);
+  const prevEntriesLengthRef = useRef(entries.length);
+  const isScrollingRef = useRef(false);
+  const anchorRef = useRef<{ cursor: string; offset: number } | null>(null);
+  const lastExpandedCursorRef = useRef<string | null>(null);
+  const entriesRef = useRef(entries);
+  const entriesKeyRef = useRef(entries);
+  entriesKeyRef.current = entries;
+
+  const getItemKey = useCallback((index: number) => {
+    return entriesKeyRef.current[index]?.cursor ?? index;
+  }, []);
 
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => parentRef.current,
+    getItemKey,
     estimateSize: () => 48,
     overscan: 10,
     measureElement: (element) => element.getBoundingClientRect().height,
   });
 
+  const updateAnchor = useCallback((preferredCursor?: string) => {
+    if (!parentRef.current) return;
+    const parent = parentRef.current;
+    const preferred = preferredCursor ?? anchorRef.current?.cursor;
+    let cursor = preferred;
+    let anchorEl: HTMLElement | null = null;
+
+    if (cursor) {
+      anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
+    }
+
+    if (!anchorEl) {
+      const virtualItems = rowVirtualizer.getVirtualItems();
+      if (virtualItems.length === 0) return;
+      const scrollTop = parent.scrollTop;
+      const visibleItem =
+        virtualItems.find((item) => item.start <= scrollTop && item.start + item.size > scrollTop) ??
+        virtualItems[0];
+      cursor = entries[visibleItem.index]?.cursor ?? null;
+      if (!cursor) return;
+      anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
+    }
+
+    if (!anchorEl || !cursor) return;
+    const parentRect = parent.getBoundingClientRect();
+    const anchorRect = anchorEl.getBoundingClientRect();
+    anchorRef.current = {
+      cursor,
+      offset: anchorRect.top - parentRect.top,
+    };
+  }, [entries, rowVirtualizer]);
+
   const handleToggleExpand = useCallback((cursor: string) => {
+    updateAnchor(cursor);
     setExpandedRows((prev) => {
       const next = new Set(prev);
       if (next.has(cursor)) {
         next.delete(cursor);
       } else {
         next.add(cursor);
+        lastExpandedCursorRef.current = cursor;
+      }
+      if (isFollowing) {
+        if (next.size > 0) {
+          pause();
+        } else if (!userScrolled) {
+          resume();
+          lastExpandedCursorRef.current = null;
+        }
       }
       return next;
     });
+  }, [isFollowing, pause, resume, updateAnchor, userScrolled]);
+
+  // Scroll to top (where newest entries appear in follow mode)
+  const scrollToTop = useCallback(() => {
+    if (!parentRef.current) return;
+    isScrollingRef.current = true;
+    parentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 500);
   }, []);
 
   const handleScroll = useCallback(() => {
     if (!parentRef.current) return;
 
     const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
 
-    if (isNearBottom && hasMore && !isLoading) {
-      loadMore();
+    // Handle follow mode scroll behavior
+    if (isFollowing && !isScrollingRef.current) {
+      const atTop = scrollTop < 50;
+
+      if (!atTop && !userScrolled) {
+        // User scrolled away from top - pause follow mode
+        setUserScrolled(true);
+        pause();
+      } else if (atTop && userScrolled) {
+        // User scrolled back to top - resume follow mode
+        setUserScrolled(false);
+        resume();
+      }
     }
-  }, [hasMore, isLoading, loadMore]);
+
+    // Handle load more (when not in follow mode)
+    if (!isFollowing) {
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      if (isNearBottom && hasMore && !isLoading) {
+        loadMore();
+      }
+    }
+
+    if (isFollowing && (isFollowPaused || expandedRows.size > 0)) {
+      updateAnchor(lastExpandedCursorRef.current ?? undefined);
+    } else if (!isFollowing || (!isFollowPaused && expandedRows.size === 0)) {
+      anchorRef.current = null;
+    }
+  }, [
+    isFollowing,
+    isFollowPaused,
+    expandedRows.size,
+    hasMore,
+    isLoading,
+    loadMore,
+    pause,
+    resume,
+    updateAnchor,
+    userScrolled,
+  ]);
+
+  // Handle new entries in follow mode - reset virtualizer measurements and scroll to top
+  useEffect(() => {
+    const prevLength = prevEntriesLengthRef.current;
+    const newLength = entries.length;
+
+    if (isFollowing && newLength > prevLength) {
+      // Scroll to top if not paused and no rows are expanded
+      if (!isFollowPaused && expandedRows.size === 0) {
+        scrollToTop();
+        anchorRef.current = null;
+      } else if (parentRef.current && anchorRef.current) {
+        const parent = parentRef.current;
+        const anchor = anchorRef.current;
+        const anchorEl = parent.querySelector(`[data-cursor="${anchor.cursor}"]`);
+        if (anchorEl) {
+          const parentRect = parent.getBoundingClientRect();
+          const anchorRect = anchorEl.getBoundingClientRect();
+          const newOffset = anchorRect.top - parentRect.top;
+          const delta = newOffset - anchor.offset;
+          if (delta !== 0) {
+            parent.scrollTop += delta;
+          }
+        }
+      }
+    }
+    prevEntriesLengthRef.current = newLength;
+  }, [entries, entries.length, expandedRows.size, isFollowing, isFollowPaused, scrollToTop]);
+
+  // Reset user scrolled state and expanded rows when follow mode stops
+  useEffect(() => {
+    if (!isFollowing) {
+      setUserScrolled(false);
+      setExpandedRows(new Set());
+    }
+  }, [isFollowing]);
+
+  // Clear expanded rows when entries change significantly (filter change)
+  useEffect(() => {
+    // If entries array reference changed and we're not in follow mode, clear expanded rows
+    if (entriesRef.current !== entries && !isFollowing) {
+      setExpandedRows(new Set());
+    }
+    entriesRef.current = entries;
+  }, [entries, isFollowing]);
 
   if (error) {
     return (
@@ -67,7 +214,7 @@ export function LogViewer() {
     );
   }
 
-  if (!isLoading && entries.length === 0) {
+  if (!isLoading && entries.length === 0 && !isFollowing) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-8">
@@ -83,8 +230,30 @@ export function LogViewer() {
     );
   }
 
+  // Show waiting message when follow mode is active but no entries yet
+  if (isFollowing && entries.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center p-8">
+          <div className="relative flex justify-center mb-4">
+            <span className="relative flex h-6 w-6">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-6 w-6 bg-green-500"></span>
+            </span>
+          </div>
+          <h3 className="text-lg font-medium text-theme mb-2">
+            Waiting for new log entries...
+          </h3>
+          <p className="text-sm text-theme-secondary">
+            New entries will appear here as they are written to the journal
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col min-h-0 relative">
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 bg-theme-secondary border-b border-theme text-xs font-medium text-theme-secondary">
         <div className="w-6"></div>
@@ -114,6 +283,7 @@ export function LogViewer() {
               <div
                 key={entry.cursor}
                 data-index={virtualRow.index}
+                data-cursor={entry.cursor}
                 ref={rowVirtualizer.measureElement}
                 style={{
                   position: 'absolute',
@@ -143,7 +313,7 @@ export function LogViewer() {
         )}
 
         {/* Load more indicator */}
-        {hasMore && !isLoading && (
+        {hasMore && !isLoading && !isFollowing && (
           <div className="flex items-center justify-center py-4">
             <button
               onClick={loadMore}
@@ -154,6 +324,24 @@ export function LogViewer() {
           </div>
         )}
       </div>
+
+      {/* Follow mode paused indicator - floating button to scroll to top */}
+      {isFollowing && isFollowPaused && (
+        <div className="absolute bottom-4 right-4 z-10">
+          <button
+            onClick={() => {
+              scrollToTop();
+              resume();
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700
+                       text-white text-sm font-medium rounded-lg shadow-lg
+                       transition-colors"
+          >
+            <ArrowDown className="h-4 w-4 rotate-180" />
+            Resume following
+          </button>
+        </div>
+      )}
     </div>
   );
 }
