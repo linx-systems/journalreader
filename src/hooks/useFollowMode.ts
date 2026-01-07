@@ -124,12 +124,23 @@ export function useFollowMode() {
     };
   }, [cleanup]);
 
-  // Stop follow mode when filter changes
+  // Restart follow mode when filter changes (to apply new filters)
+  const filterRef = useRef(filter);
   useEffect(() => {
+    // Skip the initial render
+    if (filterRef.current === filter) return;
+    filterRef.current = filter;
+
+    // If following, restart with the new filter
     if (isFollowing) {
-      stop();
+      // Restart follow with new filter
+      startFollow(filter).catch((err) => {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(`Failed to update follow filter: ${errorMessage}`);
+        setFollowing(false);
+      });
     }
-  }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filter, isFollowing, setError, setFollowing]);
 
   return {
     isFollowing,

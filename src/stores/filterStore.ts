@@ -41,10 +41,10 @@ export const useFilterStore = create<FilterState>((set) => ({
   setFilter: (newFilter) =>
     set((state) => ({
       filter: { ...state.filter, ...newFilter },
-      // Reset pagination when filter changes
-      entries: [],
-      cursorEnd: null,
-      hasMore: false,
+      // Reset pagination when filter changes (but keep entries in follow mode)
+      entries: state.isFollowing ? state.entries : [],
+      cursorEnd: state.isFollowing ? state.cursorEnd : null,
+      hasMore: state.isFollowing ? state.hasMore : false,
     })),
 
   resetFilter: () =>
