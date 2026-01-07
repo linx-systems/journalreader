@@ -5,6 +5,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { ChevronDown, ChevronRight, Copy, Check, Filter } from 'lucide-react';
 import clsx from 'clsx';
 import { useFilterStore } from '../../stores/filterStore';
+import { ContextMenu } from './ContextMenu';
 
 interface LogEntryProps {
   entry: JournalEntry;
@@ -47,7 +48,8 @@ const PRIORITY_CSS_CLASSES: Record<number, string> = {
 
 export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isExpanded, onToggleExpand }: LogEntryProps) {
   const [copied, setCopied] = useState(false);
-  const setFilter = useFilterStore((state) => state.setFilter);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const { filter, setFilter } = useFilterStore();
 
   const timestamp = new Date(entry.realtimeTimestamp / 1000);
   const relativeTime = formatDistanceToNow(timestamp, { addSuffix: true });
@@ -59,9 +61,53 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleCopyJson = async () => {
+    await navigator.clipboard.writeText(JSON.stringify(entry, null, 2));
+  };
+
   const handleFilterByBootId = (e: React.MouseEvent) => {
     e.stopPropagation();
     setFilter({ bootId: entry.bootId, bootOffset: undefined });
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleFilterByUnit = () => {
+    const unitName = entry.systemdUnit || entry.syslogIdentifier;
+    if (unitName && !filter.units.includes(unitName)) {
+      setFilter({ units: [...filter.units, unitName] });
+    }
+  };
+
+  const handleExcludeUnit = () => {
+    const unitName = entry.systemdUnit || entry.syslogIdentifier;
+    if (unitName && !filter.excludedUnits.includes(unitName)) {
+      setFilter({ excludedUnits: [...filter.excludedUnits, unitName] });
+    }
+  };
+
+  const handleFilterByPriority = () => {
+    const currentPriorities = filter.priorities || [];
+    if (!currentPriorities.includes(entry.priority)) {
+      setFilter({ priorities: [...currentPriorities, entry.priority] });
+    }
+  };
+
+  const handleSearchSimilar = () => {
+    // Extract meaningful words from the message (3+ chars, not common words)
+    const words = entry.message
+      .split(/[\s\[\](){}:=,]+/)
+      .filter(word => word.length >= 3)
+      .filter(word => !/^(the|and|for|are|but|not|you|all|can|had|her|was|one|our|out)$/i.test(word))
+      .slice(0, 3);
+
+    if (words.length > 0) {
+      setFilter({ grepPattern: words.join('.*') });
+    }
   };
 
   return (
@@ -70,6 +116,7 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
         'border-b border-theme',
         isExpanded ? 'bg-theme-secondary' : 'hover:bg-theme-secondary'
       )}
+      onContextMenu={handleContextMenu}
     >
       <div
         className="flex items-start gap-2 px-3 py-2 cursor-pointer"
@@ -174,6 +221,22 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
             </div>
           </div>
         </div>
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          entry={entry}
+          onClose={() => setContextMenu(null)}
+          onCopyMessage={handleCopy}
+          onCopyJson={handleCopyJson}
+          onFilterByUnit={handleFilterByUnit}
+          onExcludeUnit={handleExcludeUnit}
+          onFilterByPriority={handleFilterByPriority}
+          onSearchSimilar={handleSearchSimilar}
+        />
       )}
     </div>
   );
