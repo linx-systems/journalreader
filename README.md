@@ -9,10 +9,10 @@ A modern, native Linux desktop application for reading and filtering system jour
 
 - **Advanced Filtering** - Filter logs by priority level, time range, systemd units, boot sessions, and syslog identifiers
 - **Powerful Search** - Grep-based pattern matching with regex support and case-sensitivity toggle
-- **Virtual Scrolling** - Efficiently browse large log sets with smooth infinite scroll
+- **Virtual Scrolling** – Efficiently browse large log sets with smooth infinite scroll
 - **Expandable Entries** - Click any log entry to view full metadata (PID, UID, executable, hostname, etc.)
 - **Theme Support** - Dark/light themes with system-aware defaults, plus custom theme creation
-- **Multi-Boot Support** - View and compare logs across different boot sessions
+- **Multi-Boot Support** – View and compare logs across different boot sessions
 
 ## Screenshots
 
