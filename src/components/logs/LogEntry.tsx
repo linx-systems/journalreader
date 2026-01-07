@@ -2,8 +2,9 @@ import { memo, useState } from 'react';
 import type { JournalEntry } from '../../lib/types';
 import { PRIORITY_LABELS } from '../../lib/types';
 import { formatDistanceToNow } from 'date-fns';
-import { ChevronDown, ChevronRight, Copy, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Copy, Check, Filter } from 'lucide-react';
 import clsx from 'clsx';
+import { useFilterStore } from '../../stores/filterStore';
 
 interface LogEntryProps {
   entry: JournalEntry;
@@ -46,6 +47,7 @@ const PRIORITY_CSS_CLASSES: Record<number, string> = {
 
 export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isExpanded, onToggleExpand }: LogEntryProps) {
   const [copied, setCopied] = useState(false);
+  const setFilter = useFilterStore((state) => state.setFilter);
 
   const timestamp = new Date(entry.realtimeTimestamp / 1000);
   const relativeTime = formatDistanceToNow(timestamp, { addSuffix: true });
@@ -55,6 +57,11 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
     await navigator.clipboard.writeText(entry.message);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleFilterByBootId = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFilter({ bootId: entry.bootId, bootOffset: undefined });
   };
 
   return (
@@ -150,11 +157,20 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
                 <span className="text-theme font-mono">{entry.exe}</span>
               </div>
             )}
-            <div className="col-span-2">
+            <div className="col-span-2 flex items-center gap-2">
               <span className="text-theme-secondary">Boot ID:</span>{' '}
               <span className="text-theme font-mono text-xs break-all">
                 {entry.bootId}
               </span>
+              <button
+                onClick={handleFilterByBootId}
+                className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-theme-secondary
+                           rounded hover:opacity-80 transition-opacity"
+                title="Filter by this Boot ID"
+              >
+                <Filter className="h-3 w-3" />
+                Filter
+              </button>
             </div>
           </div>
         </div>
