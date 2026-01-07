@@ -3,12 +3,22 @@ import { FilterPanel } from './components/filters/FilterPanel';
 import { LogViewer } from './components/logs/LogViewer';
 import { Toolbar } from './components/toolbar/Toolbar';
 import { SettingsPanel } from './components/settings/SettingsPanel';
-import { PanelLeftClose, PanelLeft, ScrollText, Settings } from 'lucide-react';
+import { useBookmarkShortcuts } from './hooks/useBookmarkShortcuts';
+import { useBookmarkStore } from './stores/bookmarkStore';
+import { PanelLeftClose, PanelLeft, ScrollText, Settings, Bookmark } from 'lucide-react';
 import clsx from 'clsx';
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { activeBookmarkId, bookmarks } = useBookmarkStore();
+
+  // Enable keyboard shortcuts for bookmarks (Ctrl+1 through Ctrl+9)
+  useBookmarkShortcuts();
+
+  const activeBookmark = activeBookmarkId
+    ? bookmarks.find((b) => b.id === activeBookmarkId)
+    : null;
 
   return (
     <div className="h-screen flex flex-col bg-theme-secondary">
@@ -31,6 +41,12 @@ function App() {
             <h1 className="text-lg font-semibold text-theme">
               Journal Reader
             </h1>
+            {activeBookmark && (
+              <div className="flex items-center gap-1.5 ml-2 px-2 py-0.5 bg-accent/10 text-accent rounded text-sm">
+                <Bookmark className="h-3.5 w-3.5 fill-accent/30" />
+                <span>{activeBookmark.name}</span>
+              </div>
+            )}
           </div>
         </div>
         <button
