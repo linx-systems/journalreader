@@ -8,6 +8,8 @@ import clsx from 'clsx';
 interface LogEntryProps {
   entry: JournalEntry;
   searchPattern?: string;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
 }
 
 function highlightText(text: string, pattern?: string): React.ReactNode {
@@ -42,8 +44,7 @@ const PRIORITY_CSS_CLASSES: Record<number, string> = {
   7: 'log-debug priority-bg-debug',
 };
 
-export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern }: LogEntryProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isExpanded, onToggleExpand }: LogEntryProps) {
   const [copied, setCopied] = useState(false);
 
   const timestamp = new Date(entry.realtimeTimestamp / 1000);
@@ -65,7 +66,7 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern }: L
     >
       <div
         className="flex items-start gap-2 px-3 py-2 cursor-pointer"
-        onClick={() => setIsExpanded(!isExpanded)}
+        onClick={onToggleExpand}
       >
         <button className="mt-1 text-theme-secondary">
           {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -105,7 +106,7 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern }: L
 
       {/* Expanded details */}
       {isExpanded && (
-        <div className="px-10 pb-3 space-y-2">
+        <div className="px-10 pb-3 space-y-2 max-h-[300px] overflow-y-auto">
           <div className="flex items-center gap-2 mb-2">
             <button
               onClick={handleCopy}
@@ -149,10 +150,10 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern }: L
                 <span className="text-theme font-mono">{entry.exe}</span>
               </div>
             )}
-            <div>
+            <div className="col-span-2">
               <span className="text-theme-secondary">Boot ID:</span>{' '}
-              <span className="text-theme font-mono text-xs">
-                {entry.bootId.substring(0, 8)}...
+              <span className="text-theme font-mono text-xs break-all">
+                {entry.bootId}
               </span>
             </div>
           </div>

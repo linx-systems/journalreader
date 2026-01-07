@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFilterStore } from '../../stores/filterStore';
@@ -9,13 +9,27 @@ export function LogViewer() {
   const parentRef = useRef<HTMLDivElement>(null);
   const { entries, isLoading, error, hasMore, loadMore } = useJournalLogs();
   const { filter } = useFilterStore();
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 48,
     overscan: 10,
+    measureElement: (element) => element.getBoundingClientRect().height,
   });
+
+  const handleToggleExpand = useCallback((cursor: string) => {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(cursor)) {
+        next.delete(cursor);
+      } else {
+        next.add(cursor);
+      }
+      return next;
+    });
+  }, []);
 
   const handleScroll = useCallback(() => {
     if (!parentRef.current) return;
@@ -95,9 +109,12 @@ export function LogViewer() {
         >
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const entry = entries[virtualRow.index];
+            const isExpanded = expandedRows.has(entry.cursor);
             return (
               <div
                 key={entry.cursor}
+                data-index={virtualRow.index}
+                ref={rowVirtualizer.measureElement}
                 style={{
                   position: 'absolute',
                   top: 0,
@@ -109,6 +126,8 @@ export function LogViewer() {
                 <LogEntryRow
                   entry={entry}
                   searchPattern={filter.grepPattern}
+                  isExpanded={isExpanded}
+                  onToggleExpand={() => handleToggleExpand(entry.cursor)}
                 />
               </div>
             );
