@@ -25,6 +25,8 @@ pub struct FollowErrorEvent {
 pub struct JournalFollower {
     child: Option<Child>,
     running: Arc<AtomicBool>,
+    // Flag to suppress stopped event during restart
+    restarting: Arc<AtomicBool>,
 }
 
 impl JournalFollower {
@@ -32,6 +34,7 @@ impl JournalFollower {
         Self {
             child: None,
             running: Arc::new(AtomicBool::new(false)),
+            restarting: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -41,8 +44,10 @@ impl JournalFollower {
         filter: &JournalFilter,
         app_handle: AppHandle,
     ) -> Result<(), JournalError> {
+        // Mark as restarting to suppress the stopped event
+        self.restarting.store(true, Ordering::SeqCst);
         // Stop any existing follow session
-        self.stop();
+        self.stop_internal();
 
         let mut cmd = Command::new("journalctl");
         cmd.arg("-o").arg("json");
@@ -96,8 +101,10 @@ impl JournalFollower {
 
         self.child = Some(child);
         self.running.store(true, Ordering::SeqCst);
+        self.restarting.store(false, Ordering::SeqCst);
 
         let running = self.running.clone();
+        let restarting = self.restarting.clone();
 
         // Spawn a thread to read the stream
         std::thread::spawn(move || {
@@ -160,15 +167,17 @@ impl JournalFollower {
                 );
             }
 
-            // Notify that follow mode has stopped
-            let _ = app_handle.emit("journal-follow-stopped", ());
+            // Notify that follow mode has stopped (unless we're restarting)
+            if !restarting.load(Ordering::SeqCst) {
+                let _ = app_handle.emit("journal-follow-stopped", ());
+            }
         });
 
         Ok(())
     }
 
-    /// Stop following the journal
-    pub fn stop(&mut self) {
+    /// Internal stop - doesn't clear the restarting flag
+    fn stop_internal(&mut self) {
         self.running.store(false, Ordering::SeqCst);
 
         if let Some(mut child) = self.child.take() {
@@ -176,6 +185,13 @@ impl JournalFollower {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+
+    /// Stop following the journal
+    pub fn stop(&mut self) {
+        // Clear restarting flag so the stopped event is emitted
+        self.restarting.store(false, Ordering::SeqCst);
+        self.stop_internal();
     }
 
     /// Check if follow mode is currently active
