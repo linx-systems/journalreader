@@ -1,0 +1,61 @@
+# Cargo configuration for faster dev builds
+
+# Use a faster linker if available
+[target.x86_64-unknown-linux-gnu]
+# Use mold linker if installed (much faster than default ld)
+# Install with: sudo apt install mold
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# Alternative: Use lld linker (faster than default, widely available)
+# Install with: sudo apt install lld
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.aarch64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+# Build configuration
+[build]
+# Number of parallel jobs (defaults to CPU cores)
+# jobs = 8
+
+# Incremental compilation (enabled by default for dev)
+incremental = true
+
+# Profile for dev builds - optimize for compile speed
+[profile.dev]
+# Minimal optimizations for faster compile
+opt-level = 0
+# Enable debug info for debugging
+debug = true
+# Split debug info for faster linking
+split-debuginfo = "unpacked"
+# Incremental compilation
+incremental = true
+# Fewer codegen units = slower compile but faster runtime
+# More codegen units = faster compile but slower runtime
+codegen-units = 256
+# Don't run LTO in dev
+lto = false
+
+# Dependencies can be optimized even in dev builds
+# This makes the app faster without slowing dev builds much
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+# Faster release builds for testing
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+# Custom profile for quick release testing
+[profile.quick-release]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 16
