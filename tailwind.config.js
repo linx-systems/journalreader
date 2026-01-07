@@ -1,9 +1,15 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  // JIT mode is enabled by default in Tailwind v3.x
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  // Disable preflight for faster builds if not using Tailwind base styles heavily
+  corePlugins: {
+    // Keep preflight enabled (comment out to disable)
+    // preflight: false,
+  },
   theme: {
     extend: {
       colors: {
@@ -24,4 +30,8 @@ export default {
     },
   },
   plugins: [],
+  // Future-proof settings for better tree-shaking
+  future: {
+    hoverOnlyWhenSupported: true,
+  },
 }
