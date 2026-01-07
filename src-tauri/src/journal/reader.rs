@@ -69,7 +69,14 @@ impl JournalReader {
 
         // Limit
         // Fetch one extra to determine if there are more entries
-        cmd.arg("-n").arg((filter.limit + 1).to_string());
+        // If we have exclusions, fetch more to compensate for filtered entries
+        let fetch_limit = if filter.excluded_units.is_empty() {
+            filter.limit + 1
+        } else {
+            // Fetch 3x when excluding to ensure we get enough entries after filtering
+            (filter.limit * 3) + 1
+        };
+        cmd.arg("-n").arg(fetch_limit.to_string());
 
         let output = cmd.output()?;
 
@@ -95,7 +102,17 @@ impl JournalReader {
             }
 
             match Self::parse_entry(line) {
-                Ok(entry) => entries.push(entry),
+                Ok(entry) => {
+                    // Filter out excluded units
+                    if !filter.excluded_units.is_empty() {
+                        if let Some(ref unit) = entry.systemd_unit {
+                            if filter.excluded_units.contains(unit) {
+                                continue;
+                            }
+                        }
+                    }
+                    entries.push(entry);
+                }
                 Err(e) => {
                     eprintln!("Warning: Failed to parse journal entry: {}", e);
                     continue;
@@ -103,11 +120,9 @@ impl JournalReader {
             }
         }
 
-        // Determine if there are more entries
+        // Determine if there are more entries and truncate to requested limit
         let has_more = entries.len() > filter.limit as usize;
-        if has_more {
-            entries.pop(); // Remove the extra entry we fetched
-        }
+        entries.truncate(filter.limit as usize);
 
         let cursor_start = entries.first().map(|e| e.cursor.clone());
         let cursor_end = entries.last().map(|e| e.cursor.clone());
@@ -157,14 +172,36 @@ impl JournalReader {
             }
         }
 
-        // Output only count
-        cmd.arg("--output=cat");
+        // If we have excluded units, we need to use JSON output to filter them
+        if !filter.excluded_units.is_empty() {
+            cmd.arg("-o").arg("json");
+            let output = cmd.output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
 
-        let output = cmd.output()?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let count = stdout.lines().count() as u64;
+            let count = stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .filter(|line| {
+                    if let Ok(value) = serde_json::from_str::<Value>(line) {
+                        if let Some(unit) = value.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
+                            return !filter.excluded_units.contains(&unit.to_string());
+                        }
+                    }
+                    true // Include entries without a unit or parse errors
+                })
+                .count() as u64;
 
-        Ok(count)
+            Ok(count)
+        } else {
+            // Output only count (faster when no exclusions)
+            cmd.arg("--output=cat");
+
+            let output = cmd.output()?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let count = stdout.lines().count() as u64;
+
+            Ok(count)
+        }
     }
 
     pub fn list_units() -> Result<Vec<SystemUnit>, JournalError> {

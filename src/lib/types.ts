@@ -18,6 +18,7 @@ export interface JournalEntry {
 
 export interface JournalFilter {
   units: string[];
+  excludedUnits: string[];
   priorities?: number[];
   since?: string;
   until?: string;
@@ -88,6 +89,7 @@ export const PRIORITY_BG_COLORS: Record<number, string> = {
 
 export const DEFAULT_FILTER: JournalFilter = {
   units: [],
+  excludedUnits: [],
   caseSensitive: false,
   limit: 500,
   reverse: true,

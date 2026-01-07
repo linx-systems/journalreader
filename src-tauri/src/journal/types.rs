@@ -26,6 +26,8 @@ pub struct JournalFilter {
     #[serde(default)]
     pub units: Vec<String>,
     #[serde(default)]
+    pub excluded_units: Vec<String>,
+    #[serde(default)]
     pub priorities: Vec<u8>,
     pub since: Option<String>,
     pub until: Option<String>,
