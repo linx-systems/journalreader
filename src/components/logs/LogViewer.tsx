@@ -183,7 +183,7 @@ export function LogViewer() {
             const isExpanded = expandedRows.has(entry.cursor);
             return (
               <div
-                key={entry.cursor}
+                key={`${entry.cursor}-${isExpanded ? 'expanded' : 'collapsed'}`}
                 data-index={virtualRow.index}
                 ref={rowVirtualizer.measureElement}
                 style={{
