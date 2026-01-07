@@ -1,17 +1,28 @@
 import { useState, useMemo } from 'react';
 import { useFilterStore } from '../../stores/filterStore';
 import { useBoots } from '../../hooks/useUnits';
-import { HardDrive, ChevronDown } from 'lucide-react';
+import { HardDrive, ChevronDown, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import { format, formatDistanceToNow } from 'date-fns';
 
 export function BootSelector() {
   const { filter, setFilter } = useFilterStore();
-  const { boots, isLoading } = useBoots();
+  const { boots, isLoading, refresh } = useBoots();
   const [isOpen, setIsOpen] = useState(false);
 
+  // Sort boots: current boot first (offset 0), then by offset descending
   const sortedBoots = useMemo(() => {
     return [...boots].sort((a, b) => b.bootOffset - a.bootOffset);
+  }, [boots]);
+
+  // Get all boots except current for the "previous boots" section
+  const previousBoots = useMemo(() => {
+    return sortedBoots.filter(b => b.bootOffset !== 0);
+  }, [sortedBoots]);
+
+  // Get current boot info
+  const currentBoot = useMemo(() => {
+    return boots.find(b => b.bootOffset === 0);
   }, [boots]);
 
   const selectedBoot = useMemo(() => {
@@ -43,6 +54,11 @@ export function BootSelector() {
     setIsOpen(false);
   };
 
+  const handleRefresh = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    refresh();
+  };
+
   const formatBootTime = (timestamp?: number) => {
     if (!timestamp) return '';
     const date = new Date(timestamp / 1000);
@@ -67,7 +83,7 @@ export function BootSelector() {
     if (boot.bootOffset === -1) {
       return 'Previous boot';
     }
-    return `Boot ${boot.bootOffset}`;
+    return `${Math.abs(boot.bootOffset)} boots ago`;
   };
 
   const getRelativeTime = (timestamp?: number) => {
@@ -85,14 +101,29 @@ export function BootSelector() {
         <label className="block text-sm font-medium text-theme">
           Boot Session
         </label>
-        {isBootSelected && (
-          <button
-            onClick={handleClearBoot}
-            className="ml-auto text-xs text-theme-secondary hover:text-theme transition-colors"
-          >
-            Clear
-          </button>
+        {boots.length > 0 && (
+          <span className="text-xs px-1.5 py-0.5 rounded bg-theme-secondary text-theme-secondary">
+            {boots.length} {boots.length === 1 ? 'boot' : 'boots'}
+          </span>
         )}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={handleRefresh}
+            disabled={isLoading}
+            className="p-1 text-theme-secondary hover:text-theme transition-colors disabled:opacity-50"
+            title="Refresh boot list"
+          >
+            <RefreshCw className={clsx('h-3.5 w-3.5', isLoading && 'animate-spin')} />
+          </button>
+          {isBootSelected && (
+            <button
+              onClick={handleClearBoot}
+              className="text-xs text-theme-secondary hover:text-theme transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Dropdown */}
@@ -112,7 +143,7 @@ export function BootSelector() {
 
         {isOpen && (
           <div className="absolute z-10 w-full mt-1 bg-theme border border-theme
-                          rounded-lg shadow-lg max-h-60 overflow-hidden">
+                          rounded-lg shadow-lg max-h-96 overflow-hidden">
             {/* All boots option */}
             <button
               onClick={handleClearBoot}
@@ -125,47 +156,77 @@ export function BootSelector() {
               <span className="block text-xs text-theme-secondary">Show logs from all boot sessions</span>
             </button>
 
-            <div className="overflow-y-auto max-h-48">
+            {/* Current boot special option */}
+            {currentBoot && (
+              <button
+                onClick={() => handleSelectBoot(0)}
+                className={clsx(
+                  'w-full text-left px-3 py-2 text-sm hover:bg-theme-secondary transition-colors border-b border-theme',
+                  filter.bootOffset === 0 && 'selection-theme'
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Current boot</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                    Active
+                  </span>
+                </div>
+                <div className="text-xs text-theme-secondary mt-0.5">
+                  Started {formatBootTime(currentBoot.firstEntry)}
+                  {currentBoot.firstEntry && currentBoot.lastEntry && (
+                    <span className="ml-2">
+                      (running {formatBootDuration(currentBoot.firstEntry, currentBoot.lastEntry)})
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs font-mono text-theme-secondary mt-0.5 truncate opacity-50">
+                  {currentBoot.bootId.substring(0, 16)}...
+                </div>
+              </button>
+            )}
+
+            {/* Previous boots section */}
+            <div className="overflow-y-auto max-h-64">
               {isLoading ? (
                 <div className="p-3 text-sm text-theme-secondary text-center">Loading boots...</div>
-              ) : sortedBoots.length === 0 ? (
-                <div className="p-3 text-sm text-theme-secondary text-center">No boots found</div>
+              ) : previousBoots.length === 0 ? (
+                <div className="p-3 text-sm text-theme-secondary text-center">No previous boots found</div>
               ) : (
-                sortedBoots.map((boot) => (
-                  <button
-                    key={boot.bootId}
-                    onClick={() => handleSelectBoot(boot.bootOffset)}
-                    className={clsx(
-                      'w-full text-left px-3 py-2 text-sm hover:bg-theme-secondary transition-colors',
-                      (filter.bootOffset === boot.bootOffset || filter.bootId === boot.bootId) && 'selection-theme'
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{getBootLabel(boot)}</span>
-                      {boot.bootOffset === 0 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                          Active
-                        </span>
+                <>
+                  <div className="px-3 py-1.5 text-xs font-medium text-theme-secondary bg-theme-secondary border-b border-theme">
+                    Previous Boots
+                  </div>
+                  {previousBoots.map((boot) => (
+                    <button
+                      key={boot.bootId}
+                      onClick={() => handleSelectBoot(boot.bootOffset)}
+                      className={clsx(
+                        'w-full text-left px-3 py-2 text-sm hover:bg-theme-secondary transition-colors',
+                        (filter.bootOffset === boot.bootOffset || filter.bootId === boot.bootId) && 'selection-theme'
                       )}
-                    </div>
-                    <div className="text-xs text-theme-secondary mt-0.5">
-                      {formatBootTime(boot.firstEntry)}
-                      {boot.firstEntry && boot.lastEntry && (
-                        <span className="ml-2">
-                          ({formatBootDuration(boot.firstEntry, boot.lastEntry)})
-                        </span>
-                      )}
-                      {boot.bootOffset !== 0 && boot.lastEntry && (
-                        <span className="ml-2 italic">
-                          {getRelativeTime(boot.lastEntry)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs font-mono text-theme-secondary mt-0.5 truncate opacity-50">
-                      {boot.bootId.substring(0, 16)}...
-                    </div>
-                  </button>
-                ))
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{getBootLabel(boot)}</span>
+                      </div>
+                      <div className="text-xs text-theme-secondary mt-0.5">
+                        {formatBootTime(boot.firstEntry)}
+                        {boot.firstEntry && boot.lastEntry && (
+                          <span className="ml-2">
+                            ({formatBootDuration(boot.firstEntry, boot.lastEntry)})
+                          </span>
+                        )}
+                        {boot.lastEntry && (
+                          <span className="ml-2 italic">
+                            {getRelativeTime(boot.lastEntry)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs font-mono text-theme-secondary mt-0.5 truncate opacity-50">
+                        {boot.bootId.substring(0, 16)}...
+                      </div>
+                    </button>
+                  ))}
+                </>
               )}
             </div>
           </div>

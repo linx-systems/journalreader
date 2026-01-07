@@ -32,22 +32,26 @@ export function useBoots() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchBoots() {
-      try {
-        setIsLoading(true);
-        const result = await listBoots();
-        setBoots(result);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setIsLoading(false);
-      }
+  const fetchBoots = async () => {
+    try {
+      setIsLoading(true);
+      const result = await listBoots();
+      setBoots(result);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
     }
+  };
 
+  useEffect(() => {
     fetchBoots();
   }, []);
 
-  return { boots, isLoading, error };
+  const refresh = () => {
+    fetchBoots();
+  };
+
+  return { boots, isLoading, error, refresh };
 }
