@@ -13,8 +13,9 @@ import {
   Shield,
 } from 'lucide-react';
 import { useConnectionStore } from '../../stores/connectionStore';
-import { testHostConnection } from '../../lib/tauri';
+import { testHostConnection, connectToHostAcceptKey } from '../../lib/tauri';
 import type { RemoteHost, RemoteHostInput, AuthMethod } from '../../lib/types';
+import { HostKeyVerificationDialog } from './HostKeyVerificationDialog';
 import clsx from 'clsx';
 
 interface ConnectionManagerProps {
@@ -51,6 +52,11 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     action: 'connect' | 'test';
   } | null>(null);
   const [password, setPassword] = useState('');
+  const [hostKeyVerification, setHostKeyVerification] = useState<{
+    host: RemoteHost;
+    errorMessage: string;
+    password?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -58,21 +64,24 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     }
   }, [isOpen, loadHosts]);
 
-  const handleConnect = async (host: RemoteHost) => {
+  const handleConnect = async (host: RemoteHost, pwd?: string) => {
     // Check if password is needed
-    if (host.authMethod === 'password' || (host.authMethod === 'key' && host.keyPath)) {
-      // For key auth, we might need a passphrase; for password auth, we always need password
-      if (host.authMethod === 'password') {
-        setPasswordPrompt({ hostId: host.id, action: 'connect' });
-        return;
-      }
+    if (host.authMethod === 'password' && !pwd) {
+      setPasswordPrompt({ hostId: host.id, action: 'connect' });
+      return;
     }
 
     setIsConnecting(host.id);
     try {
-      await connect(host.id);
+      await connect(host.id, pwd);
     } catch (error) {
-      // Error is shown through connection store
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Check if this is a host key verification error
+      if (errorMessage.includes('Host key verification required') ||
+          errorMessage.includes('HOST KEY HAS CHANGED')) {
+        setHostKeyVerification({ host, errorMessage, password: pwd });
+      }
+      // Other errors are shown through connection store
     } finally {
       setIsConnecting(null);
     }
@@ -80,28 +89,39 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
 
   const handleConnectWithPassword = async () => {
     if (!passwordPrompt) return;
-    
-    setIsConnecting(passwordPrompt.hostId);
+
+    const hostId = passwordPrompt.hostId;
+    const action = passwordPrompt.action;
+    const pwd = password;
+    const host = hosts.find((h) => h.id === hostId);
+
+    setIsConnecting(hostId);
     setPasswordPrompt(null);
-    
+    setPassword('');
+
     try {
-      if (passwordPrompt.action === 'connect') {
-        await connect(passwordPrompt.hostId, password);
+      if (action === 'connect') {
+        await connect(hostId, pwd);
       } else {
-        setIsTesting(passwordPrompt.hostId);
-        const result = await testHostConnection(passwordPrompt.hostId, password);
+        setIsTesting(hostId);
+        const result = await testHostConnection(hostId, pwd);
         setTestResult({
-          hostId: passwordPrompt.hostId,
+          hostId: hostId,
           success: result.success,
           message: result.message,
         });
         setIsTesting(null);
       }
     } catch (error) {
-      // Error handled by store
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Check if this is a host key verification error
+      if (host && (errorMessage.includes('Host key verification required') ||
+          errorMessage.includes('HOST KEY HAS CHANGED'))) {
+        setHostKeyVerification({ host, errorMessage, password: pwd });
+      }
+      // Other errors are shown through connection store
     } finally {
       setIsConnecting(null);
-      setPassword('');
     }
   };
 
@@ -121,11 +141,18 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
         message: result.message,
       });
     } catch (error) {
-      setTestResult({
-        hostId: host.id,
-        success: false,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      // Check if this is a host key verification error
+      if (errorMessage.includes('Host key verification required') ||
+          errorMessage.includes('HOST KEY HAS CHANGED')) {
+        setHostKeyVerification({ host, errorMessage });
+      } else {
+        setTestResult({
+          hostId: host.id,
+          success: false,
+          message: errorMessage,
+        });
+      }
     } finally {
       setIsTesting(null);
     }
@@ -137,6 +164,34 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
   };
 
   if (!isOpen) return null;
+
+  // Handle host key verification dialog
+  if (hostKeyVerification) {
+    const handleAcceptHostKey = async () => {
+      const { host, password: pwd } = hostKeyVerification;
+      setHostKeyVerification(null);
+      setIsConnecting(host.id);
+      try {
+        // This accepts the key and connects in one step
+        await connectToHostAcceptKey(host.id, pwd);
+        // Refresh connection state from backend to update the store
+        await useConnectionStore.getState().refreshConnectionState();
+      } catch (error) {
+        // Error will be shown through connection store
+      } finally {
+        setIsConnecting(null);
+      }
+    };
+
+    return (
+      <HostKeyVerificationDialog
+        host={hostKeyVerification.host}
+        errorMessage={hostKeyVerification.errorMessage}
+        onAccept={handleAcceptHostKey}
+        onReject={() => setHostKeyVerification(null)}
+      />
+    );
+  }
 
   if (editingHost || isCreating) {
     return (
@@ -322,17 +377,26 @@ function HostCard({
       <div className="flex items-start justify-between">
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="font-medium text-theme">{host.name}</h3>
+            <h3 className={clsx(
+              'font-medium',
+              isConnected ? 'text-green-900 dark:text-green-100' : 'text-theme'
+            )}>{host.name}</h3>
             {isConnected && (
               <span className="px-2 py-0.5 text-xs font-medium bg-green-500 text-white rounded">
                 Connected
               </span>
             )}
           </div>
-          <p className="text-sm text-theme-secondary mt-1">
+          <p className={clsx(
+            'text-sm mt-1',
+            isConnected ? 'text-green-700 dark:text-green-300' : 'text-theme-secondary'
+          )}>
             {host.username}@{host.hostname}:{host.port}
           </p>
-          <div className="flex items-center gap-3 mt-2 text-xs text-theme-secondary">
+          <div className={clsx(
+            'flex items-center gap-3 mt-2 text-xs',
+            isConnected ? 'text-green-600 dark:text-green-400' : 'text-theme-secondary'
+          )}>
             <span className="flex items-center gap-1">
               <AuthIcon className="h-3 w-3" />
               {host.authMethod === 'agent' ? 'SSH Agent' : host.authMethod === 'key' ? 'Key File' : 'Password'}

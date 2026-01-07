@@ -30,3 +30,6 @@ uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "5"
 # Signal handling for graceful shutdown
 ctrlc = "3"
+# Host key fingerprint calculation
+sha2 = "0.10"
+base64 = "0.22"

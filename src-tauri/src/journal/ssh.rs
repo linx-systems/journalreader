@@ -1,4 +1,5 @@
 use crate::error::JournalError;
+use crate::journal::known_hosts::{HostKeyStatus, SharedKnownHostsStorage};
 use crate::journal::types::{AuthMethod, RemoteHost, TestConnectionResult};
 use ssh2::Session;
 use std::io::Read;
@@ -14,8 +15,32 @@ pub struct SshConnection {
 }
 
 impl SshConnection {
-    /// Create a new SSH connection to a remote host
-    pub fn connect(host: &RemoteHost, password: Option<&str>) -> Result<Self, JournalError> {
+    /// Create a new SSH connection to a remote host with host key verification
+    pub fn connect(
+        host: &RemoteHost,
+        password: Option<&str>,
+        known_hosts: &SharedKnownHostsStorage,
+    ) -> Result<Self, JournalError> {
+        Self::connect_internal(host, password, Some(known_hosts), false)
+    }
+
+    /// Create a new SSH connection, accepting the host key if it's new
+    /// Use this only when the user has explicitly accepted the key
+    pub fn connect_and_accept_key(
+        host: &RemoteHost,
+        password: Option<&str>,
+        known_hosts: &SharedKnownHostsStorage,
+    ) -> Result<Self, JournalError> {
+        Self::connect_internal(host, password, Some(known_hosts), true)
+    }
+
+    /// Internal connection method with optional host key verification
+    fn connect_internal(
+        host: &RemoteHost,
+        password: Option<&str>,
+        known_hosts: Option<&SharedKnownHostsStorage>,
+        accept_new_key: bool,
+    ) -> Result<Self, JournalError> {
         let addr = format!("{}:{}", host.hostname, host.port);
 
         // Connect with timeout
@@ -37,6 +62,51 @@ impl SshConnection {
         session
             .handshake()
             .map_err(|e| JournalError::SshConnectionError(format!("SSH handshake failed: {}", e)))?;
+
+        // Verify host key before authentication (MITM protection)
+        if let Some(known_hosts_storage) = known_hosts {
+            let mut storage = known_hosts_storage
+                .lock()
+                .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
+
+            let status = storage.verify_host_key(&session, &host.hostname, host.port)?;
+
+            match status {
+                HostKeyStatus::Verified => {
+                    // Key matches - safe to proceed
+                }
+                HostKeyStatus::NewHost { fingerprint, key_type } => {
+                    if accept_new_key {
+                        // User has accepted the new key
+                        storage.accept_host_key(&session, &host.hostname, host.port)?;
+                    } else {
+                        // New host - needs user confirmation
+                        return Err(JournalError::HostKeyVerificationRequired(format!(
+                            "New host key for {}:{}\nType: {}\nFingerprint: {}",
+                            host.hostname, host.port, key_type, fingerprint
+                        )));
+                    }
+                }
+                HostKeyStatus::KeyChanged {
+                    old_fingerprint,
+                    new_fingerprint,
+                    old_key_type,
+                    new_key_type,
+                } => {
+                    // Host key changed - potential MITM attack!
+                    return Err(JournalError::HostKeyChanged(format!(
+                        "WARNING: HOST KEY HAS CHANGED for {}:{}!\n\
+                        This could indicate a man-in-the-middle attack.\n\n\
+                        Previous key ({}):\n  {}\n\n\
+                        New key ({}):\n  {}\n\n\
+                        If you trust this change, remove the old key first.",
+                        host.hostname, host.port,
+                        old_key_type, old_fingerprint,
+                        new_key_type, new_fingerprint
+                    )));
+                }
+            }
+        }
 
         // Authenticate based on method
         match host.auth_method {
@@ -225,13 +295,18 @@ impl SshConnection {
 /// Global connection manager that holds the active SSH connection
 pub struct ConnectionManager {
     connection: Option<SshConnection>,
+    known_hosts: SharedKnownHostsStorage,
 }
 
 impl ConnectionManager {
-    pub fn new() -> Self {
-        Self { connection: None }
+    pub fn new(known_hosts: SharedKnownHostsStorage) -> Self {
+        Self {
+            connection: None,
+            known_hosts,
+        }
     }
 
+    /// Connect to a host with host key verification
     pub fn connect(
         &mut self,
         host: &RemoteHost,
@@ -240,9 +315,29 @@ impl ConnectionManager {
         // Disconnect any existing connection
         self.disconnect();
 
-        let conn = SshConnection::connect(host, password)?;
+        let conn = SshConnection::connect(host, password, &self.known_hosts)?;
         self.connection = Some(conn);
         Ok(())
+    }
+
+    /// Connect to a host, accepting a new host key
+    /// Use this only when the user has explicitly accepted the key
+    pub fn connect_and_accept_key(
+        &mut self,
+        host: &RemoteHost,
+        password: Option<&str>,
+    ) -> Result<(), JournalError> {
+        // Disconnect any existing connection
+        self.disconnect();
+
+        let conn = SshConnection::connect_and_accept_key(host, password, &self.known_hosts)?;
+        self.connection = Some(conn);
+        Ok(())
+    }
+
+    /// Get a reference to the known hosts storage
+    pub fn known_hosts(&self) -> &SharedKnownHostsStorage {
+        &self.known_hosts
     }
 
     pub fn disconnect(&mut self) {
@@ -276,23 +371,23 @@ impl ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::journal::known_hosts::new_shared_known_hosts_storage;
+
+    fn create_test_manager() -> ConnectionManager {
+        let known_hosts = new_shared_known_hosts_storage().unwrap();
+        ConnectionManager::new(known_hosts)
+    }
 
     #[test]
     fn test_connection_manager_new() {
-        let manager = ConnectionManager::new();
+        let manager = create_test_manager();
         assert!(!manager.is_connected());
         assert!(manager.current_host().is_none());
     }
 
     #[test]
-    fn test_connection_manager_default() {
-        let manager = ConnectionManager::default();
-        assert!(!manager.is_connected());
-    }
-
-    #[test]
     fn test_connection_manager_not_connected_error() {
-        let manager = ConnectionManager::new();
+        let manager = create_test_manager();
 
         // Should return NotConnected error when trying to run commands without connection
         let result = manager.run_command("echo test");
@@ -305,22 +400,18 @@ mod tests {
 
     #[test]
     fn test_connection_manager_disconnect() {
-        let mut manager = ConnectionManager::new();
+        let mut manager = create_test_manager();
         // Disconnect should be safe to call even when not connected
         manager.disconnect();
         assert!(!manager.is_connected());
     }
 }
 
-impl Default for ConnectionManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Thread-safe wrapper for the connection manager
 pub type SharedConnectionManager = Arc<Mutex<ConnectionManager>>;
 
-pub fn new_shared_connection_manager() -> SharedConnectionManager {
-    Arc::new(Mutex::new(ConnectionManager::new()))
+pub fn new_shared_connection_manager(
+    known_hosts: SharedKnownHostsStorage,
+) -> SharedConnectionManager {
+    Arc::new(Mutex::new(ConnectionManager::new(known_hosts)))
 }

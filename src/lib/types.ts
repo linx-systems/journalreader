@@ -234,6 +234,22 @@ export interface TestConnectionResult {
   journalctlAvailable: boolean;
 }
 
+// Host key verification types
+export interface HostKeyInfo {
+  host: string;
+  port: number;
+  fingerprint: string;
+  keyType: string;
+}
+
+export interface StoredHostKey {
+  host: string;
+  keyType: string;
+  keyData: string;
+  fingerprint: string;
+  firstSeen: string;
+}
+
 /**
  * Efficient shallow comparison for JournalFilter objects.
  * Avoids O(n) JSON.stringify by comparing fields directly.

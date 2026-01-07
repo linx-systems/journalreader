@@ -10,6 +10,8 @@ import type {
   RemoteHostInput,
   ConnectionState,
   TestConnectionResult,
+  HostKeyInfo,
+  StoredHostKey,
 } from './types';
 
 // ============================================================================
@@ -95,6 +97,36 @@ export async function testHostConnection(
   password?: string
 ): Promise<TestConnectionResult> {
   return invoke<TestConnectionResult>('test_host_connection', { hostId, password });
+}
+
+export async function connectToHostAcceptKey(
+  hostId: string,
+  password?: string
+): Promise<void> {
+  return invoke<void>('connect_to_host_accept_key', { hostId, password });
+}
+
+// ============================================================================
+// Host Key Management Commands
+// ============================================================================
+
+export async function getHostKeyInfo(
+  hostname: string,
+  port: number
+): Promise<StoredHostKey | null> {
+  return invoke<StoredHostKey | null>('get_host_key_info', { hostname, port });
+}
+
+export async function fetchHostKey(hostId: string): Promise<HostKeyInfo> {
+  return invoke<HostKeyInfo>('fetch_host_key', { hostId });
+}
+
+export async function acceptHostKey(hostId: string): Promise<HostKeyInfo> {
+  return invoke<HostKeyInfo>('accept_host_key', { hostId });
+}
+
+export async function removeHostKey(hostname: string, port: number): Promise<boolean> {
+  return invoke<boolean>('remove_host_key', { hostname, port });
 }
 
 // ============================================================================

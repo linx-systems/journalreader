@@ -38,6 +38,12 @@ pub enum JournalError {
 
     #[error("Configuration error: {0}")]
     ConfigError(String),
+
+    #[error("Host key verification required: {0}")]
+    HostKeyVerificationRequired(String),
+
+    #[error("Host key changed - potential MITM attack: {0}")]
+    HostKeyChanged(String),
 }
 
 impl serde::Serialize for JournalError {

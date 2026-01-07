@@ -7,23 +7,31 @@ use commands::journal::{
     start_follow, stop_follow, FollowerState,
 };
 use commands::remote::{
-    add_remote_host, connect_to_host, delete_remote_host, disconnect_from_host,
-    get_connection_state, get_remote_host, get_remote_log_count, get_remote_statistics,
+    accept_host_key, add_remote_host, connect_to_host, connect_to_host_accept_key,
+    delete_remote_host, disconnect_from_host, fetch_host_key, get_connection_state,
+    get_host_key_info, get_remote_host, get_remote_log_count, get_remote_statistics,
     is_remote_following, list_remote_boots, list_remote_hosts, list_remote_units,
-    query_remote_journal, start_remote_follow, stop_remote_follow, test_current_connection,
-    test_host_connection, update_remote_host, ConnectionManagerState, HostStorageState,
-    RemoteFollowerState,
+    query_remote_journal, remove_host_key, start_remote_follow, stop_remote_follow,
+    test_current_connection, test_host_connection, update_remote_host, ConnectionManagerState,
+    HostStorageState, KnownHostsStorageState, RemoteFollowerState,
 };
 use journal::{
-    new_shared_connection_manager, new_shared_host_storage, JournalFollower,
+    check_file_permissions, get_app_config_dir, new_shared_connection_manager,
+    new_shared_host_storage, new_shared_known_hosts_storage, JournalFollower,
     RemoteJournalFollower,
 };
 use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Check file permissions on startup
+    check_config_file_permissions();
+
     // Initialize host storage
     let host_storage = new_shared_host_storage().expect("Failed to initialize host storage");
+    // Initialize known hosts storage for SSH host key verification
+    let known_hosts =
+        new_shared_known_hosts_storage().expect("Failed to initialize known hosts storage");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -43,7 +51,10 @@ pub fn run() {
         .manage(FollowerState(Mutex::new(JournalFollower::new())))
         // Remote host state
         .manage(HostStorageState(host_storage))
-        .manage(ConnectionManagerState(new_shared_connection_manager()))
+        .manage(KnownHostsStorageState(known_hosts.clone()))
+        .manage(ConnectionManagerState(new_shared_connection_manager(
+            known_hosts,
+        )))
         .manage(RemoteFollowerState(Mutex::new(RemoteJournalFollower::new())))
         .invoke_handler(tauri::generate_handler![
             // Local journal commands
@@ -63,10 +74,16 @@ pub fn run() {
             delete_remote_host,
             // Remote connection commands
             connect_to_host,
+            connect_to_host_accept_key,
             disconnect_from_host,
             get_connection_state,
             test_current_connection,
             test_host_connection,
+            // Host key management commands
+            get_host_key_info,
+            fetch_host_key,
+            accept_host_key,
+            remove_host_key,
             // Remote journal commands
             query_remote_journal,
             get_remote_log_count,
@@ -79,4 +96,20 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Check config file permissions on startup and warn if insecure
+fn check_config_file_permissions() {
+    if let Ok(config_dir) = get_app_config_dir() {
+        let hosts_file = config_dir.join("hosts.json");
+        let known_hosts_file = config_dir.join("known_hosts.json");
+
+        // Check and warn about insecure permissions
+        if let Some(warning) = check_file_permissions(&hosts_file) {
+            eprintln!("[Security] {}", warning);
+        }
+        if let Some(warning) = check_file_permissions(&known_hosts_file) {
+            eprintln!("[Security] {}", warning);
+        }
+    }
 }

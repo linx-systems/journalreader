@@ -39,6 +39,7 @@ fn default_port() -> u16 {
 
 impl RemoteHost {
     /// Create a new RemoteHost with default settings (port 22, agent auth, no sudo)
+    #[allow(dead_code)]
     pub fn new(name: String, hostname: String, username: String) -> Self {
         Self {
             id: Uuid::new_v4().to_string(),

@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-/// Get the path to the hosts configuration file
-fn get_hosts_file_path() -> Result<PathBuf, JournalError> {
+/// Get the application config directory path
+pub fn get_app_config_dir() -> Result<PathBuf, JournalError> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| JournalError::ConfigError("Could not find config directory".to_string()))?;
 
@@ -19,7 +19,75 @@ fn get_hosts_file_path() -> Result<PathBuf, JournalError> {
         })?;
     }
 
-    Ok(app_config_dir.join("hosts.json"))
+    Ok(app_config_dir)
+}
+
+/// Get the path to the hosts configuration file
+fn get_hosts_file_path() -> Result<PathBuf, JournalError> {
+    Ok(get_app_config_dir()?.join("hosts.json"))
+}
+
+/// Check if a file has insecure permissions (world-readable)
+/// Returns a warning message if the file is world-readable, None otherwise
+#[cfg(unix)]
+pub fn check_file_permissions(path: &PathBuf) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !path.exists() {
+        return None;
+    }
+
+    match fs::metadata(path) {
+        Ok(metadata) => {
+            let mode = metadata.permissions().mode();
+            // Check if group or others have any read permissions (bits 044)
+            if mode & 0o044 != 0 {
+                Some(format!(
+                    "WARNING: {} has insecure permissions (mode {:o}). \
+                    This file may contain sensitive data. \
+                    Recommend: chmod 600 {}",
+                    path.display(),
+                    mode & 0o777,
+                    path.display()
+                ))
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+#[cfg(not(unix))]
+pub fn check_file_permissions(_path: &PathBuf) -> Option<String> {
+    // Permission checks are only relevant on Unix systems
+    None
+}
+
+/// Fix insecure file permissions by setting mode 0600
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn fix_file_permissions(path: &PathBuf) -> Result<(), JournalError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let perms = fs::Permissions::from_mode(0o600);
+    fs::set_permissions(path, perms).map_err(|e| {
+        JournalError::ConfigError(format!(
+            "Failed to fix permissions on {}: {}",
+            path.display(),
+            e
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+#[allow(dead_code)]
+pub fn fix_file_permissions(_path: &PathBuf) -> Result<(), JournalError> {
+    Ok(())
 }
 
 /// Storage for remote hosts
@@ -49,15 +117,25 @@ impl HostStorage {
         Ok(Self { hosts })
     }
 
-    /// Save hosts to disk
+    /// Save hosts to disk with secure permissions
     pub fn save(&self) -> Result<(), JournalError> {
         let path = get_hosts_file_path()?;
 
         let content = serde_json::to_string_pretty(&self.hosts)
             .map_err(|e| JournalError::ConfigError(format!("Failed to serialize hosts: {}", e)))?;
 
-        fs::write(&path, content)
+        fs::write(&path, &content)
             .map_err(|e| JournalError::ConfigError(format!("Failed to write hosts file: {}", e)))?;
+
+        // Set restrictive permissions (0600) on Unix - file contains sensitive data
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = fs::Permissions::from_mode(0o600);
+            fs::set_permissions(&path, perms).map_err(|e| {
+                JournalError::ConfigError(format!("Failed to set permissions on hosts file: {}", e))
+            })?;
+        }
 
         Ok(())
     }

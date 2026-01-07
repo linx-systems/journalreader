@@ -1,4 +1,5 @@
 use crate::error::JournalError;
+use crate::journal::known_hosts::{HostKeyStatus, SharedKnownHostsStorage};
 use crate::journal::parser::parse_entry;
 use crate::journal::types::{AuthMethod, JournalEntry, JournalFilter, RemoteHost};
 use regex::Regex;
@@ -44,6 +45,7 @@ impl RemoteJournalFollower {
         host: &RemoteHost,
         password: Option<String>,
         filter: &JournalFilter,
+        known_hosts: SharedKnownHostsStorage,
         app_handle: AppHandle,
     ) -> Result<(), JournalError> {
         // Mark as restarting to suppress the stopped event
@@ -68,7 +70,7 @@ impl RemoteJournalFollower {
 
         // Spawn a thread to handle the SSH connection and streaming
         std::thread::spawn(move || {
-            let result = Self::run_follow_loop(&host, password.as_deref(), &filter, &running, &restarting, &app_handle);
+            let result = Self::run_follow_loop(&host, password.as_deref(), &filter, &known_hosts, &running, &restarting, &app_handle);
 
             if let Err(e) = result {
                 let _ = app_handle.emit(
@@ -92,6 +94,7 @@ impl RemoteJournalFollower {
         host: &RemoteHost,
         password: Option<&str>,
         filter: &JournalFilter,
+        known_hosts: &SharedKnownHostsStorage,
         running: &Arc<AtomicBool>,
         _restarting: &Arc<AtomicBool>,
         app_handle: &AppHandle,
@@ -118,6 +121,42 @@ impl RemoteJournalFollower {
         session
             .handshake()
             .map_err(|e| JournalError::SshConnectionError(format!("SSH handshake failed: {}", e)))?;
+
+        // Verify host key before authentication (MITM protection)
+        {
+            let storage = known_hosts
+                .lock()
+                .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
+
+            let status = storage.verify_host_key(&session, &host.hostname, host.port)?;
+
+            match status {
+                HostKeyStatus::Verified => {
+                    // Key matches - safe to proceed
+                }
+                HostKeyStatus::NewHost { fingerprint, key_type } => {
+                    return Err(JournalError::HostKeyVerificationRequired(format!(
+                        "New host key for {}:{}\nType: {}\nFingerprint: {}",
+                        host.hostname, host.port, key_type, fingerprint
+                    )));
+                }
+                HostKeyStatus::KeyChanged {
+                    old_fingerprint,
+                    new_fingerprint,
+                    old_key_type,
+                    new_key_type,
+                } => {
+                    return Err(JournalError::HostKeyChanged(format!(
+                        "WARNING: HOST KEY HAS CHANGED for {}:{}!\n\
+                        Previous key ({}):\n  {}\n\
+                        New key ({}):\n  {}",
+                        host.hostname, host.port,
+                        old_key_type, old_fingerprint,
+                        new_key_type, new_fingerprint
+                    )));
+                }
+            }
+        }
 
         // Authenticate
         Self::authenticate(&mut session, host, password)?;
