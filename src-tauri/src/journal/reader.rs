@@ -6,7 +6,8 @@ use crate::journal::types::{
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 
 pub struct JournalReader;
 
@@ -385,6 +386,9 @@ impl JournalReader {
         })
     }
 
+    /// Get statistics by streaming journal entries to minimize memory usage.
+    /// Instead of loading all entries into memory at once, processes entries
+    /// line-by-line using streaming I/O.
     pub fn get_statistics(request: &StatisticsRequest) -> Result<JournalStatistics, JournalError> {
         let filter = &request.filter;
         let granularity_ms = request.granularity_ms;
@@ -392,6 +396,9 @@ impl JournalReader {
         let mut cmd = Command::new("journalctl");
         cmd.arg("-o").arg("json");
         cmd.arg("--no-pager");
+        // Use piped stdout for streaming instead of collecting all output
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
 
         // Apply unit filters
         for unit in &filter.units {
@@ -439,24 +446,17 @@ impl JournalReader {
             }
         }
 
-        let output = cmd.output()?;
+        let mut child = cmd.spawn()?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("No journal files were found")
-                || stderr.contains("Failed to open journal")
-            {
-                return Err(JournalError::JournalNotAvailable);
-            }
-            if stderr.contains("Permission denied") || stderr.contains("access denied") {
-                return Err(JournalError::PermissionDenied);
-            }
-            return Err(JournalError::ExecutionError(stderr.to_string()));
-        }
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| JournalError::ExecutionError("Failed to capture stdout".into()))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        // Stream and process entries line-by-line to minimize memory usage
+        let reader = BufReader::new(stdout);
 
-        // Aggregation maps
+        // Aggregation maps - only store aggregated data, not raw entries
         let mut timeseries_map: HashMap<i64, (u64, u64, u64)> = HashMap::new(); // (count, errors, warnings)
         let mut priority_map: HashMap<u8, u64> = HashMap::new();
         let mut service_map: HashMap<String, u64> = HashMap::new();
@@ -467,12 +467,18 @@ impl JournalReader {
             "emerg", "alert", "crit", "err", "warning", "notice", "info", "debug",
         ];
 
-        for line in stdout.lines() {
+        // Process entries one at a time - never stores the raw JSON in memory
+        for line_result in reader.lines() {
+            let line = match line_result {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+
             if line.trim().is_empty() {
                 continue;
             }
 
-            let value: Value = match serde_json::from_str(line) {
+            let value: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -524,6 +530,28 @@ impl JournalReader {
                 .unwrap_or("unknown")
                 .to_string();
             *service_map.entry(service).or_insert(0) += 1;
+        }
+
+        // Wait for the process to finish and check for errors
+        let status = child.wait()?;
+        if !status.success() {
+            // Try to read stderr for error message
+            if let Some(mut stderr) = child.stderr.take() {
+                let mut error_msg = String::new();
+                use std::io::Read;
+                let _ = stderr.read_to_string(&mut error_msg);
+                if error_msg.contains("No journal files were found")
+                    || error_msg.contains("Failed to open journal")
+                {
+                    return Err(JournalError::JournalNotAvailable);
+                }
+                if error_msg.contains("Permission denied") || error_msg.contains("access denied") {
+                    return Err(JournalError::PermissionDenied);
+                }
+                if !error_msg.is_empty() {
+                    return Err(JournalError::ExecutionError(error_msg));
+                }
+            }
         }
 
         // Convert timeseries map to sorted vec

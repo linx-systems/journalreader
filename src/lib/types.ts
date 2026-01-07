@@ -198,3 +198,40 @@ export interface TestConnectionResult {
   message: string;
   journalctlAvailable: boolean;
 }
+
+/**
+ * Efficient shallow comparison for JournalFilter objects.
+ * Avoids O(n) JSON.stringify by comparing fields directly.
+ */
+export function filtersEqual(a: JournalFilter | null, b: JournalFilter): boolean {
+  if (!a) return false;
+
+  // Compare primitives
+  if (a.since !== b.since) return false;
+  if (a.until !== b.until) return false;
+  if (a.grepPattern !== b.grepPattern) return false;
+  if (a.caseSensitive !== b.caseSensitive) return false;
+  if (a.bootId !== b.bootId) return false;
+  if (a.bootOffset !== b.bootOffset) return false;
+  if (a.identifier !== b.identifier) return false;
+  if (a.limit !== b.limit) return false;
+  if (a.reverse !== b.reverse) return false;
+  if (a.afterCursor !== b.afterCursor) return false;
+
+  // Compare arrays (these are typically small)
+  if (!arraysEqual(a.units, b.units)) return false;
+  if (!arraysEqual(a.excludedUnits, b.excludedUnits)) return false;
+  if (!arraysEqual(a.priorities, b.priorities)) return false;
+
+  return true;
+}
+
+function arraysEqual<T>(a: T[] | undefined, b: T[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}

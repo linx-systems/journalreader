@@ -67,7 +67,8 @@ export function StatisticsView() {
     );
   }
 
-  if (isLoading || !statistics) {
+  // Show full-page loading only on initial load (no existing statistics)
+  if (!statistics) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-8">
@@ -107,6 +108,12 @@ export function StatisticsView() {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-theme">
         <div className="flex items-center gap-4">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-sm text-theme-secondary">
+              <Loader2 className="h-4 w-4 animate-spin text-accent" />
+              <span>Updating...</span>
+            </div>
+          )}
           <span className="text-sm text-theme-secondary">
             <span className="font-medium text-theme">
               {statistics.totalCount.toLocaleString()}

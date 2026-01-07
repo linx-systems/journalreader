@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useFilterStore } from '../stores/filterStore';
 import { useConnectionStore } from '../stores/connectionStore';
 import { queryJournal, queryRemoteJournal } from '../lib/tauri';
+import { filtersEqual } from '../lib/types';
 
 export function useJournalLogs() {
   const {
@@ -120,8 +121,8 @@ export function useJournalLogs() {
     const isInitialLoad = prevFilterRef.current === null;
 
     // Only fetch if filter actually changed (not just reference)
-    const filterChanged = JSON.stringify(prevFilterRef.current) !== JSON.stringify(filter);
-    if (!filterChanged && !isInitialLoad) {
+    // Uses efficient shallow comparison instead of O(n) JSON.stringify
+    if (filtersEqual(prevFilterRef.current, filter) && !isInitialLoad) {
       return;
     }
     prevFilterRef.current = filter;

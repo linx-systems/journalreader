@@ -142,13 +142,12 @@ impl JournalFollower {
                                 // Emit buffered entries periodically
                                 if last_emit.elapsed().as_millis() >= BUFFER_INTERVAL_MS {
                                     if !buffer.is_empty() {
+                                        // Use std::mem::take to avoid clone - moves entries out and replaces with empty vec
+                                        let entries = std::mem::take(&mut buffer);
                                         let _ = app_handle.emit(
                                             "journal-follow-entry",
-                                            FollowEvent {
-                                                entries: buffer.clone(),
-                                            },
+                                            FollowEvent { entries },
                                         );
-                                        buffer.clear();
                                     }
                                     last_emit = std::time::Instant::now();
                                 }
