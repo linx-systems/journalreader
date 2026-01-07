@@ -374,7 +374,15 @@ export const BUILT_IN_THEMES: Theme[] = [
   MONOKAI_THEME,
 ];
 
-export function createCustomTheme(base: Theme, overrides: Partial<Theme>): Theme {
+export type ThemeOverrides = Partial<Omit<Theme, 'colors' | 'typography'>> & {
+  colors?: Partial<Omit<ThemeColors, 'priority' | 'priorityBg'>> & {
+    priority?: Partial<ThemeColors['priority']>;
+    priorityBg?: Partial<ThemeColors['priorityBg']>;
+  };
+  typography?: Partial<ThemeTypography>;
+};
+
+export function createCustomTheme(base: Theme, overrides: ThemeOverrides): Theme {
   return {
     ...base,
     ...overrides,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, expect, it } from "vitest";
 import { useFilterStore } from "../filterStore";
 import { DEFAULT_FILTER } from "../../lib/types";
 

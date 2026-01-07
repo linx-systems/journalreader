@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useThemeStore } from "../themeStore";
 import { LIGHT_THEME, createCustomTheme } from "../../lib/theme";
 

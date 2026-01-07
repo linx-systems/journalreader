@@ -76,10 +76,6 @@ export function PriorityFilter() {
 
   const isAllSelected = minPriority === 0 && maxPriority === 7;
 
-  // Calculate the selected range position for visual track
-  const rangeStart = (minPriority / 7) * 100;
-  const rangeEnd = (maxPriority / 7) * 100;
-
   // Get range label
   const rangeLabel = isAllSelected
     ? 'All priorities'

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useBookmarkStore } from "../bookmarkStore";
 import type { Bookmark } from "../bookmarkStore";
 
