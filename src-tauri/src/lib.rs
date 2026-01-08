@@ -11,6 +11,9 @@ use commands::offline::{
     get_offline_settings, get_storage_stats, get_sync_state, is_offline_mode,
     query_offline_journal, set_offline_mode, update_offline_settings,
 };
+use commands::sync::{
+    can_resume_sync, cancel_sync, trigger_sync, trigger_sync_all, SyncCancelState,
+};
 use commands::remote::{
     accept_host_key, add_remote_host, connect_to_host, connect_to_host_accept_key,
     delete_host_password, delete_remote_host, disconnect_from_host, fetch_host_key,
@@ -67,6 +70,8 @@ pub fn run() {
         .manage(RemoteFollowerState(Mutex::new(RemoteJournalFollower::new())))
         // Offline database state
         .manage(OfflineDatabaseState(offline_db))
+        // Sync cancellation state
+        .manage(SyncCancelState::default())
         .invoke_handler(tauri::generate_handler![
             // Local journal commands
             query_journal,
@@ -120,7 +125,12 @@ pub fn run() {
             get_offline_settings,
             update_offline_settings,
             is_offline_mode,
-            set_offline_mode
+            set_offline_mode,
+            // Sync commands
+            trigger_sync,
+            trigger_sync_all,
+            cancel_sync,
+            can_resume_sync
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
