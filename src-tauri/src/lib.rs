@@ -6,6 +6,11 @@ use commands::journal::{
     get_log_count, get_statistics, is_following, list_boots, list_units, query_journal,
     start_follow, stop_follow, FollowerState,
 };
+use commands::offline::{
+    delete_offline_logs, get_all_storage_stats, get_all_sync_states, get_offline_log_count,
+    get_offline_settings, get_storage_stats, get_sync_state, is_offline_mode,
+    query_offline_journal, set_offline_mode, update_offline_settings,
+};
 use commands::remote::{
     accept_host_key, add_remote_host, connect_to_host, connect_to_host_accept_key,
     delete_host_password, delete_remote_host, disconnect_from_host, fetch_host_key,
@@ -103,7 +108,19 @@ pub fn run() {
             is_keyring_available,
             save_host_password,
             get_host_password,
-            delete_host_password
+            delete_host_password,
+            // Offline storage commands
+            query_offline_journal,
+            get_offline_log_count,
+            get_sync_state,
+            get_all_sync_states,
+            get_storage_stats,
+            get_all_storage_stats,
+            delete_offline_logs,
+            get_offline_settings,
+            update_offline_settings,
+            is_offline_mode,
+            set_offline_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

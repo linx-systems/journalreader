@@ -5,7 +5,7 @@
 
 use crate::error::JournalError;
 use crate::journal::offline_db::OfflineDatabase;
-use crate::journal::offline_types::{StorageStats, SyncState, SyncStatus};
+use crate::journal::offline_types::{OfflineSettings, StorageStats, SyncState, SyncStatus};
 use crate::journal::types::{JournalEntry, JournalFilter};
 use rusqlite::{params, Row, ToSql};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -267,6 +267,143 @@ impl OfflineDatabase {
             )
             .map_err(|e| JournalError::ConfigError(format!("Failed to update sync state: {}", e)))?;
 
+        Ok(())
+    }
+
+    /// Get sync states for all hosts.
+    pub fn get_all_sync_states(&self) -> Result<Vec<SyncState>, JournalError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r#"
+                SELECT host_id, last_sync_timestamp, last_cursor, sync_status, sync_error, entries_synced
+                FROM sync_state
+                ORDER BY host_id
+                "#,
+            )
+            .map_err(|e| JournalError::ConfigError(format!("Failed to prepare query: {}", e)))?;
+
+        let rows = stmt
+            .query_map([], |row: &Row| {
+                let status_str: String = row.get(3)?;
+                Ok(SyncState {
+                    host_id: row.get(0)?,
+                    last_sync_timestamp: row.get(1)?,
+                    last_cursor: row.get(2)?,
+                    sync_status: SyncStatus::from(status_str.as_str()),
+                    sync_error: row.get(4)?,
+                    entries_synced: row.get(5)?,
+                })
+            })
+            .map_err(|e| JournalError::ConfigError(format!("Query failed: {}", e)))?;
+
+        let mut states = Vec::new();
+        for row_result in rows {
+            states.push(
+                row_result.map_err(|e| JournalError::ConfigError(format!("Failed to read row: {}", e)))?,
+            );
+        }
+
+        Ok(states)
+    }
+
+    /// Get storage statistics for all hosts.
+    pub fn get_all_storage_stats(&self) -> Result<Vec<StorageStats>, JournalError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                r#"
+                SELECT
+                    host_id,
+                    COUNT(*) as entry_count,
+                    MIN(realtime_timestamp) as oldest,
+                    MAX(realtime_timestamp) as newest
+                FROM journal_entries
+                GROUP BY host_id
+                ORDER BY host_id
+                "#,
+            )
+            .map_err(|e| JournalError::ConfigError(format!("Failed to prepare query: {}", e)))?;
+
+        // Get database file size once
+        let db_path = OfflineDatabase::path()?;
+        let db_size_bytes = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
+
+        let rows = stmt
+            .query_map([], |row: &Row| {
+                Ok(StorageStats {
+                    host_id: row.get(0)?,
+                    entry_count: row.get(1)?,
+                    oldest_timestamp: row.get(2)?,
+                    newest_timestamp: row.get(3)?,
+                    db_size_bytes,
+                })
+            })
+            .map_err(|e| JournalError::ConfigError(format!("Query failed: {}", e)))?;
+
+        let mut stats = Vec::new();
+        for row_result in rows {
+            stats.push(
+                row_result.map_err(|e| JournalError::ConfigError(format!("Failed to read row: {}", e)))?,
+            );
+        }
+
+        Ok(stats)
+    }
+
+    /// Get offline settings.
+    pub fn get_offline_settings(&self) -> Result<OfflineSettings, JournalError> {
+        let mut settings = OfflineSettings::default();
+
+        // Load each setting from the database
+        if let Ok(enabled) = self.get_setting("enabled") {
+            settings.enabled = enabled == "true";
+        }
+        if let Ok(retention) = self.get_setting("retention_days") {
+            if let Ok(days) = retention.parse::<u32>() {
+                settings.retention_days = days;
+            }
+        }
+        if let Ok(max) = self.get_setting("max_entries") {
+            if let Ok(entries) = max.parse::<u64>() {
+                settings.max_entries = entries;
+            }
+        }
+        if let Ok(auto_sync) = self.get_setting("auto_sync") {
+            settings.auto_sync = auto_sync == "true";
+        }
+
+        Ok(settings)
+    }
+
+    /// Update offline settings.
+    pub fn update_offline_settings(&self, settings: &OfflineSettings) -> Result<(), JournalError> {
+        self.set_setting("enabled", &settings.enabled.to_string())?;
+        self.set_setting("retention_days", &settings.retention_days.to_string())?;
+        self.set_setting("max_entries", &settings.max_entries.to_string())?;
+        self.set_setting("auto_sync", &settings.auto_sync.to_string())?;
+        Ok(())
+    }
+
+    /// Get a setting value from the database.
+    fn get_setting(&self, key: &str) -> Result<String, JournalError> {
+        self.conn
+            .query_row(
+                "SELECT value FROM offline_settings WHERE key = ?",
+                params![key],
+                |row: &Row| row.get(0),
+            )
+            .map_err(|e| JournalError::ConfigError(format!("Failed to get setting '{}': {}", key, e)))
+    }
+
+    /// Set a setting value in the database.
+    fn set_setting(&self, key: &str, value: &str) -> Result<(), JournalError> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO offline_settings (key, value) VALUES (?, ?)",
+                params![key, value],
+            )
+            .map_err(|e| JournalError::ConfigError(format!("Failed to set setting '{}': {}", key, e)))?;
         Ok(())
     }
 
@@ -823,5 +960,92 @@ mod tests {
         let results = db.query_entries("host1", &filter).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].message, "Host 1 message");
+    }
+
+    #[test]
+    fn test_get_all_sync_states() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Initially should return empty list
+        let states = db.get_all_sync_states().unwrap();
+        assert!(states.is_empty());
+
+        // Add sync states for multiple hosts
+        let state1 = SyncState {
+            host_id: "host1".to_string(),
+            last_sync_timestamp: 1000,
+            sync_status: SyncStatus::Completed,
+            ..Default::default()
+        };
+        let state2 = SyncState {
+            host_id: "host2".to_string(),
+            last_sync_timestamp: 2000,
+            sync_status: SyncStatus::InProgress,
+            ..Default::default()
+        };
+
+        db.update_sync_state(&state1).unwrap();
+        db.update_sync_state(&state2).unwrap();
+
+        // Should return all sync states
+        let states = db.get_all_sync_states().unwrap();
+        assert_eq!(states.len(), 2);
+        assert_eq!(states[0].host_id, "host1");
+        assert_eq!(states[1].host_id, "host2");
+    }
+
+    #[test]
+    fn test_get_all_storage_stats() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Initially should return empty list (no entries)
+        let stats = db.get_all_storage_stats().unwrap();
+        assert!(stats.is_empty());
+
+        // Add entries for multiple hosts
+        let entries1 = vec![
+            sample_entry("cur1", "Host 1 message 1", 1000000),
+            sample_entry("cur2", "Host 1 message 2", 2000000),
+        ];
+        let entries2 = vec![sample_entry("cur3", "Host 2 message", 3000000)];
+
+        db.insert_entries("host1", &entries1).unwrap();
+        db.insert_entries("host2", &entries2).unwrap();
+
+        // Should return stats for all hosts
+        let stats = db.get_all_storage_stats().unwrap();
+        assert_eq!(stats.len(), 2);
+        assert_eq!(stats[0].host_id, "host1");
+        assert_eq!(stats[0].entry_count, 2);
+        assert_eq!(stats[1].host_id, "host2");
+        assert_eq!(stats[1].entry_count, 1);
+    }
+
+    #[test]
+    fn test_offline_settings_crud() {
+        let (db, _temp_dir) = create_test_db();
+
+        // Initially should return default settings
+        let settings = db.get_offline_settings().unwrap();
+        assert!(settings.enabled);
+        assert_eq!(settings.retention_days, 30);
+        assert_eq!(settings.max_entries, 100_000);
+        assert!(settings.auto_sync);
+
+        // Update settings
+        let new_settings = OfflineSettings {
+            enabled: false,
+            retention_days: 7,
+            max_entries: 50_000,
+            auto_sync: false,
+        };
+        db.update_offline_settings(&new_settings).unwrap();
+
+        // Verify update
+        let settings = db.get_offline_settings().unwrap();
+        assert!(!settings.enabled);
+        assert_eq!(settings.retention_days, 7);
+        assert_eq!(settings.max_entries, 50_000);
+        assert!(!settings.auto_sync);
     }
 }
