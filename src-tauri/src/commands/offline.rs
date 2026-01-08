@@ -7,11 +7,31 @@
 use crate::commands::remote::OfflineDatabaseState;
 use crate::error::JournalError;
 use crate::journal::{
-    JournalFilter, JournalQueryResult, OfflineSettings, RetentionPolicy, RetentionResult,
-    StorageStats, SyncState, SyncStatus,
+    JournalEntry, JournalFilter, JournalQueryResult, OfflineSettings, RetentionPolicy,
+    RetentionResult, StorageStats, SyncState, SyncStatus,
 };
+use chrono::{TimeZone, Utc};
+use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
+
+// ============================================================================
+// Export Types
+// ============================================================================
+
+/// Supported export formats for offline logs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportFormat {
+    /// JSON array of JournalEntry objects (re-importable)
+    Json,
+    /// Human-readable text format
+    Text,
+    /// CSV format for spreadsheets
+    Csv,
+}
 
 /// Global offline mode flag.
 /// When true, the app should use offline storage instead of remote connections.
@@ -229,6 +249,167 @@ pub fn get_retention_policy(
         .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
 
     db.get_retention_policy()
+}
+
+// ============================================================================
+// Export Commands
+// ============================================================================
+
+/// Export offline logs to a file in the specified format.
+///
+/// Queries all entries matching the filter for the given host and writes them
+/// to the specified file path in the requested format.
+///
+/// Returns the number of entries exported.
+#[tauri::command]
+pub fn export_offline_logs(
+    host_id: String,
+    filter: JournalFilter,
+    format: ExportFormat,
+    path: String,
+    state: State<'_, OfflineDatabaseState>,
+) -> Result<u64, JournalError> {
+    let db = state
+        .0
+        .lock()
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
+
+    // Query all entries without limit for export
+    let mut export_filter = filter.clone();
+    export_filter.limit = 0; // Use default/max for export
+    export_filter.reverse = false; // Export in chronological order
+
+    let entries = db.query_entries(&host_id, &export_filter)?;
+
+    if entries.is_empty() {
+        return Ok(0);
+    }
+
+    // Write to file based on format
+    match format {
+        ExportFormat::Json => write_json(&path, &entries)?,
+        ExportFormat::Text => write_text(&path, &entries)?,
+        ExportFormat::Csv => write_csv(&path, &entries)?,
+    }
+
+    Ok(entries.len() as u64)
+}
+
+/// Write entries as JSON array to file.
+fn write_json(path: &str, entries: &[JournalEntry]) -> Result<(), JournalError> {
+    let file = File::create(path)
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
+    let writer = BufWriter::new(file);
+
+    serde_json::to_writer_pretty(writer, entries)
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to write JSON: {}", e)))?;
+
+    Ok(())
+}
+
+/// Write entries as human-readable text to file.
+fn write_text(path: &str, entries: &[JournalEntry]) -> Result<(), JournalError> {
+    let file = File::create(path)
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
+    let mut writer = BufWriter::new(file);
+
+    for entry in entries {
+        let timestamp = format_timestamp(entry.realtime_timestamp);
+        let priority_label = priority_to_label(entry.priority);
+        let unit = entry.systemd_unit.as_deref().unwrap_or("-");
+
+        writeln!(
+            writer,
+            "[{}] [{}] [{}]: {}",
+            timestamp, priority_label, unit, entry.message
+        )
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to write text: {}", e)))?;
+    }
+
+    writer
+        .flush()
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to flush file: {}", e)))?;
+
+    Ok(())
+}
+
+/// Write entries as CSV to file.
+fn write_csv(path: &str, entries: &[JournalEntry]) -> Result<(), JournalError> {
+    let file = File::create(path)
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
+    let mut writer = BufWriter::new(file);
+
+    // Write header row
+    writeln!(writer, "timestamp,priority,unit,identifier,pid,message")
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV header: {}", e)))?;
+
+    for entry in entries {
+        let timestamp = format_timestamp_iso(entry.realtime_timestamp);
+        let unit = entry.systemd_unit.as_deref().unwrap_or("");
+        let identifier = entry.syslog_identifier.as_deref().unwrap_or("");
+        let pid = entry.pid.map(|p| p.to_string()).unwrap_or_default();
+        // Escape message for CSV (double quotes and wrap in quotes)
+        let message = escape_csv(&entry.message);
+
+        writeln!(
+            writer,
+            "{},{},{},{},{},{}",
+            timestamp, entry.priority, unit, identifier, pid, message
+        )
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV row: {}", e)))?;
+    }
+
+    writer
+        .flush()
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to flush file: {}", e)))?;
+
+    Ok(())
+}
+
+/// Format timestamp as human-readable string for text export.
+fn format_timestamp(micros: i64) -> String {
+    let secs = micros / 1_000_000;
+    let nanos = ((micros % 1_000_000) * 1000) as u32;
+    if let Some(dt) = Utc.timestamp_opt(secs, nanos).single() {
+        dt.format("%Y-%m-%d %H:%M:%S").to_string()
+    } else {
+        format!("{}", micros)
+    }
+}
+
+/// Format timestamp as ISO 8601 string for CSV export.
+fn format_timestamp_iso(micros: i64) -> String {
+    let secs = micros / 1_000_000;
+    let nanos = ((micros % 1_000_000) * 1000) as u32;
+    if let Some(dt) = Utc.timestamp_opt(secs, nanos).single() {
+        dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+    } else {
+        format!("{}", micros)
+    }
+}
+
+/// Convert priority number to short label for text export.
+fn priority_to_label(priority: u8) -> &'static str {
+    match priority {
+        0 => "EMERG",
+        1 => "ALERT",
+        2 => "CRIT",
+        3 => "ERR",
+        4 => "WARN",
+        5 => "NOTICE",
+        6 => "INFO",
+        7 => "DEBUG",
+        _ => "???",
+    }
+}
+
+/// Escape a string for CSV format.
+fn escape_csv(s: &str) -> String {
+    if s.contains('"') || s.contains(',') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
 }
 
 // ============================================================================

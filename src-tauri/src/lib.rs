@@ -7,10 +7,10 @@ use commands::journal::{
     start_follow, stop_follow, FollowerState,
 };
 use commands::offline::{
-    apply_retention_all, apply_retention_now, delete_offline_logs, get_all_storage_stats,
-    get_all_sync_states, get_offline_log_count, get_offline_settings, get_retention_policy,
-    get_storage_stats, get_sync_state, is_offline_mode, query_offline_journal, set_offline_mode,
-    update_offline_settings,
+    apply_retention_all, apply_retention_now, delete_offline_logs, export_offline_logs,
+    get_all_storage_stats, get_all_sync_states, get_offline_log_count, get_offline_settings,
+    get_retention_policy, get_storage_stats, get_sync_state, is_offline_mode,
+    query_offline_journal, set_offline_mode, update_offline_settings,
 };
 use commands::sync::{
     can_resume_sync, cancel_sync, trigger_sync, trigger_sync_all, SyncCancelState,
@@ -132,6 +132,8 @@ pub fn run() {
             apply_retention_now,
             apply_retention_all,
             get_retention_policy,
+            // Export commands
+            export_offline_logs,
             // Sync commands
             trigger_sync,
             trigger_sync_all,

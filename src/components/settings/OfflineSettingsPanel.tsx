@@ -9,9 +9,12 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { save } from '@tauri-apps/plugin-dialog';
 import { useOfflineStore } from '../../stores/offlineStore';
 import { useConnectionStore } from '../../stores/connectionStore';
-import type { OfflineSettings, StorageStats, SyncState } from '../../lib/offlineTypes';
+import { exportOfflineLogs } from '../../lib/offlineTauri';
+import type { OfflineSettings, StorageStats, SyncState, ExportFormat } from '../../lib/offlineTypes';
+import type { JournalFilter } from '../../lib/types';
 
 type RetentionMode = 'days' | 'boots' | 'size' | 'unlimited';
 
@@ -127,10 +130,49 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
     }
   };
 
-  const handleExport = (hostId: string, format: 'json' | 'text' | 'csv') => {
-    // TODO: Implement export functionality
-    console.log(`Exporting ${hostId} as ${format}`);
+  const handleExport = async (hostId: string, format: ExportFormat) => {
     setExportMenuHost(null);
+
+    // Get extension and filter for the format
+    const extensions: Record<ExportFormat, { ext: string; name: string }> = {
+      json: { ext: 'json', name: 'JSON Files' },
+      text: { ext: 'txt', name: 'Text Files' },
+      csv: { ext: 'csv', name: 'CSV Files' },
+    };
+    const { ext, name } = extensions[format];
+
+    // Find host name for default filename
+    const host = hosts.find((h) => h.id === hostId);
+    const hostName = host?.name || hostId;
+    const timestamp = new Date().toISOString().split('T')[0];
+    const defaultFilename = `${hostName.replace(/[^a-zA-Z0-9-_]/g, '_')}-logs-${timestamp}.${ext}`;
+
+    try {
+      // Show save dialog
+      const filePath = await save({
+        defaultPath: defaultFilename,
+        filters: [{ name, extensions: [ext] }],
+      });
+
+      if (!filePath) {
+        return; // User cancelled
+      }
+
+      // Create empty filter to export all entries for this host
+      const filter: JournalFilter = {
+        units: [],
+        excludedUnits: [],
+        priorities: [],
+        caseSensitive: false,
+        limit: 0, // Export all
+        reverse: false,
+      };
+
+      const count = await exportOfflineLogs(hostId, filter, format, filePath);
+      console.log(`Exported ${count} entries to ${filePath}`);
+    } catch (error) {
+      console.error('Export failed:', error);
+    }
   };
 
   const formatBytes = (bytes: number): string => {
@@ -413,7 +455,7 @@ interface HostStorageCardProps {
   onDeleteConfirm: () => void;
   onDeleteCancel: () => void;
   onExportMenuToggle: () => void;
-  onExport: (format: 'json' | 'text' | 'csv') => void;
+  onExport: (format: ExportFormat) => void;
   formatBytes: (bytes: number) => string;
   formatTimestamp: (timestamp: number) => string;
 }

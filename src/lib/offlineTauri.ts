@@ -9,6 +9,7 @@ import type {
   StorageStats,
   OfflineSettings,
   SyncResult,
+  ExportFormat,
 } from './offlineTypes';
 import type { JournalFilter, JournalQueryResult } from './types';
 
@@ -154,4 +155,21 @@ export async function cancelSync(hostId: string): Promise<void> {
  */
 export async function canResumeSync(hostId: string): Promise<boolean> {
   return invoke<boolean>('can_resume_sync', { hostId });
+}
+
+// ============================================================================
+// Export Commands
+// ============================================================================
+
+/**
+ * Export offline logs to a file in the specified format.
+ * Returns the number of entries exported.
+ */
+export async function exportOfflineLogs(
+  hostId: string,
+  filter: JournalFilter,
+  format: ExportFormat,
+  path: string
+): Promise<number> {
+  return invoke<number>('export_offline_logs', { hostId, filter, format, path });
 }

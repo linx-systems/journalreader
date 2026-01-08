@@ -128,3 +128,8 @@ export interface SyncFailedEvent {
   hostId: string;
   error: string | null;
 }
+
+/**
+ * Export format for offline logs
+ */
+export type ExportFormat = 'json' | 'text' | 'csv';
