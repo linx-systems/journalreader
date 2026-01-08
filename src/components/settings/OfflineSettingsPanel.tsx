@@ -16,8 +16,6 @@ import { exportOfflineLogs } from '../../lib/offlineTauri';
 import type { OfflineSettings, StorageStats, SyncState, ExportFormat } from '../../lib/offlineTypes';
 import type { JournalFilter } from '../../lib/types';
 
-type RetentionMode = 'days' | 'boots' | 'size' | 'unlimited';
-
 interface OfflineSettingsPanelProps {
   className?: string;
 }
@@ -42,8 +40,6 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
 
   // Local state for form editing
   const [localSettings, setLocalSettings] = useState<OfflineSettings>(settings);
-  const [retentionMode, setRetentionMode] = useState<RetentionMode>('days');
-  const [retentionValue, setRetentionValue] = useState<number>(30);
   const [deleteConfirmHost, setDeleteConfirmHost] = useState<string | null>(null);
   const [exportMenuHost, setExportMenuHost] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -66,43 +62,12 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
   // Sync local settings with store
   useEffect(() => {
     setLocalSettings(settings);
-    // Parse retention settings into mode/value
-    if (settings.retentionDays === 0 && settings.maxEntries === 0) {
-      setRetentionMode('unlimited');
-      setRetentionValue(0);
-    } else if (settings.retentionDays > 0) {
-      setRetentionMode('days');
-      setRetentionValue(settings.retentionDays);
-    } else if (settings.maxEntries > 0) {
-      // Treat maxEntries as a proxy for size-based retention
-      setRetentionMode('size');
-      setRetentionValue(Math.round(settings.maxEntries / 1000)); // Convert to rough MB
-    }
   }, [settings]);
-
-  // Convert retention mode/value to settings format
-  const getSettingsFromRetention = (mode: RetentionMode, value: number): Partial<OfflineSettings> => {
-    switch (mode) {
-      case 'days':
-        return { retentionDays: value, maxEntries: 0 };
-      case 'boots':
-        // Boots mode isn't directly supported by backend, use days as approximation
-        return { retentionDays: value * 7, maxEntries: 0 }; // Approximate 1 boot = 7 days
-      case 'size':
-        // Convert MB to approximate entry count (rough estimate)
-        return { retentionDays: 0, maxEntries: value * 1000 };
-      case 'unlimited':
-        return { retentionDays: 0, maxEntries: 0 };
-      default:
-        return {};
-    }
-  };
 
   const handleSave = async () => {
     setSaveStatus('saving');
     try {
-      const retentionSettings = getSettingsFromRetention(retentionMode, retentionValue);
-      await updateSettings({ ...localSettings, ...retentionSettings });
+      await updateSettings(localSettings);
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
     } catch {
@@ -257,32 +222,23 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
             </button>
           </div>
 
-          {/* Sync interval */}
-          {localSettings.autoSync && (
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-theme">Sync interval</p>
-                <p className="text-sm text-theme-secondary">
-                  How often to check for new entries (minutes)
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={5}
-                  max={1440}
-                  value={localSettings.retentionDays > 0 ? 15 : 15} // Default 15 min
-                  onChange={(e) => {
-                    // Note: syncIntervalMinutes not in current OfflineSettings type
-                    // This is a placeholder for future implementation
-                  }}
-                  className="w-20 px-2 py-1 text-sm bg-theme border border-theme rounded text-theme focus:outline-none focus:ring-2 focus:ring-accent"
-                  disabled
-                />
-                <span className="text-sm text-theme-secondary">min</span>
-              </div>
+          {/* Boots to sync */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium text-theme">Boots to sync</p>
+              <p className="text-sm text-theme-secondary">
+                Number of system boots to sync and retain (1-20)
+              </p>
             </div>
-          )}
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={localSettings.syncBoots}
+              onChange={(e) => setLocalSettings({ ...localSettings, syncBoots: parseInt(e.target.value) || 5 })}
+              className="w-20 px-2 py-1 text-sm bg-theme border border-theme rounded text-theme focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+          </div>
 
           {/* Sync on startup toggle */}
           <div className="flex items-center justify-between">
@@ -308,60 +264,6 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
               />
             </button>
           </div>
-        </div>
-      </section>
-
-      {/* Retention Settings */}
-      <section>
-        <h3 className="text-sm font-medium text-theme-secondary uppercase tracking-wide mb-4">
-          Retention Settings
-        </h3>
-        <div className="space-y-4 bg-theme-secondary rounded-lg p-4">
-          {/* Mode selector */}
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-theme">Retention mode</p>
-              <p className="text-sm text-theme-secondary">
-                How to limit offline storage
-              </p>
-            </div>
-            <select
-              value={retentionMode}
-              onChange={(e) => setRetentionMode(e.target.value as RetentionMode)}
-              className="px-3 py-1.5 text-sm bg-theme border border-theme rounded text-theme focus:outline-none focus:ring-2 focus:ring-accent"
-            >
-              <option value="days">Days</option>
-              <option value="boots">Boots</option>
-              <option value="size">Size (MB)</option>
-              <option value="unlimited">Unlimited</option>
-            </select>
-          </div>
-
-          {/* Conditional value input based on mode */}
-          {retentionMode !== 'unlimited' && (
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-theme">
-                  {retentionMode === 'days' && 'Retain for (days)'}
-                  {retentionMode === 'boots' && 'Retain for (boots)'}
-                  {retentionMode === 'size' && 'Maximum size (MB)'}
-                </p>
-                <p className="text-sm text-theme-secondary">
-                  {retentionMode === 'days' && 'Keep entries for this many days (1-365)'}
-                  {retentionMode === 'boots' && 'Keep entries for this many system boots (1-100)'}
-                  {retentionMode === 'size' && 'Maximum storage size (100-10000 MB)'}
-                </p>
-              </div>
-              <input
-                type="number"
-                min={retentionMode === 'size' ? 100 : 1}
-                max={retentionMode === 'days' ? 365 : retentionMode === 'boots' ? 100 : 10000}
-                value={retentionValue}
-                onChange={(e) => setRetentionValue(parseInt(e.target.value) || 0)}
-                className="w-24 px-2 py-1 text-sm bg-theme border border-theme rounded text-theme focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-          )}
         </div>
       </section>
 

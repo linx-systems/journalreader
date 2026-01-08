@@ -48,10 +48,8 @@ export interface StorageStats {
 export interface OfflineSettings {
   /** Whether offline mode is enabled */
   enabled: boolean;
-  /** Retention period in days (0 = no limit) */
-  retentionDays: number;
-  /** Maximum entries to store (0 = no limit) */
-  maxEntries: number;
+  /** Number of boots to sync and retain (default: 5) */
+  syncBoots: number;
   /** Whether to sync automatically when connected */
   autoSync: boolean;
 }
@@ -61,10 +59,31 @@ export interface OfflineSettings {
  */
 export const DEFAULT_OFFLINE_SETTINGS: OfflineSettings = {
   enabled: true,
-  retentionDays: 30,
-  maxEntries: 100000,
+  syncBoots: 5,
   autoSync: true,
 };
+
+/**
+ * Retention policy configuration
+ */
+export interface RetentionPolicy {
+  /** Number of boots to keep per host */
+  boots: number;
+}
+
+/**
+ * Result of a retention cleanup operation
+ */
+export interface RetentionResult {
+  /** Host ID that was cleaned up */
+  hostId: string;
+  /** Number of entries deleted */
+  entriesDeleted: number;
+  /** Number of boots kept */
+  bootsKept: number;
+  /** Error message if cleanup failed */
+  error: string | null;
+}
 
 /**
  * Status types for sync progress events

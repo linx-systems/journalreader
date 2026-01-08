@@ -1,7 +1,7 @@
-//! Sync engine for incremental synchronization of journal entries from remote hosts.
+//! Sync engine for boot-based synchronization of journal entries from remote hosts.
 //!
-//! This module implements the core sync logic that fetches new entries from remote hosts
-//! and stores them in the local SQLite database for offline access.
+//! This module implements the core sync logic that fetches entries from the last N boots
+//! of remote hosts and stores them in the local SQLite database for offline access.
 
 use crate::error::JournalError;
 use crate::journal::offline_db::OfflineDatabase;
@@ -17,9 +17,9 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
 // Re-export retention types for convenience
-pub use crate::journal::offline_types::{RetentionMode, RetentionPolicy, RetentionResult};
+pub use crate::journal::offline_types::{RetentionPolicy, RetentionResult};
 
-/// Default batch size for fetching entries during sync
+/// Batch size for fetching entries within each boot
 const SYNC_BATCH_SIZE: u32 = 1000;
 
 /// Event payload for sync progress updates
@@ -98,12 +98,12 @@ impl SyncEngine {
 
     /// Sync journal entries from a remote host.
     ///
-    /// This method implements incremental sync by:
-    /// 1. Getting the last synced cursor from the database
-    /// 2. Fetching batches of entries after that cursor
-    /// 3. Inserting entries into SQLite (transaction per batch)
-    /// 4. Updating sync state after each batch
-    /// 5. Emitting progress events
+    /// This method implements boot-based sync by:
+    /// 1. Getting the list of available boots from the remote host
+    /// 2. Selecting the last N boots based on settings
+    /// 3. Fetching all entries from each boot in batches
+    /// 4. Inserting entries into SQLite
+    /// 5. Applying retention policy to clean up old boots
     ///
     /// # Arguments
     /// * `host_id` - The ID of the host to sync
@@ -123,6 +123,35 @@ impl SyncEngine {
         cancel_flag: Arc<AtomicBool>,
         app_handle: Option<&AppHandle>,
     ) -> SyncResult {
+        // Check for cancellation before starting
+        if cancel_flag.load(Ordering::SeqCst) {
+            return SyncResult {
+                host_id: host_id.to_string(),
+                success: false,
+                entries_synced: 0,
+                total_entries: 0,
+                error: None,
+                cancelled: true,
+            };
+        }
+
+        // Get offline settings to determine how many boots to sync
+        let settings = match db.get_offline_settings() {
+            Ok(s) => s,
+            Err(e) => {
+                return SyncResult {
+                    host_id: host_id.to_string(),
+                    success: false,
+                    entries_synced: 0,
+                    total_entries: 0,
+                    error: Some(format!("Failed to get offline settings: {}", e)),
+                    cancelled: false,
+                };
+            }
+        };
+
+        let boots_to_sync = settings.sync_boots;
+
         // Get initial sync state
         let mut sync_state = match db.get_sync_state(host_id) {
             Ok(state) => state,
@@ -167,88 +196,125 @@ impl SyncEngine {
             };
         }
 
-        let mut last_cursor = sync_state.last_cursor.clone();
+        // Get list of available boots from remote
+        let boots = match RemoteJournalReader::list_boots(conn) {
+            Ok(b) => b,
+            Err(e) => {
+                sync_state.sync_status = SyncStatus::Failed;
+                sync_state.sync_error = Some(format!("Failed to list boots: {}", e));
+                let _ = db.update_sync_state(&sync_state);
+                return SyncResult {
+                    host_id: host_id.to_string(),
+                    success: false,
+                    entries_synced: 0,
+                    total_entries: sync_state.entries_synced,
+                    error: Some(format!("Failed to list boots: {}", e)),
+                    cancelled: false,
+                };
+            }
+        };
+
+        // Select the last N boots (boots are already sorted by offset, 0 is current)
+        // Take boots with offset >= -(boots_to_sync - 1)
+        let boots_to_fetch: Vec<_> = boots
+            .iter()
+            .filter(|b| b.boot_offset >= -(boots_to_sync as i32 - 1))
+            .collect();
+
         let mut entries_synced: i64 = 0;
         let mut sync_error: Option<String> = None;
         let mut was_cancelled = false;
 
-        // Sync loop - fetch batches until no more entries
-        loop {
+        // Sync each boot
+        for boot in &boots_to_fetch {
             // Check for cancellation
             if cancel_flag.load(Ordering::SeqCst) {
                 was_cancelled = true;
                 break;
             }
 
-            // Build filter for this batch
-            // When no cursor exists (first sync), use since="@0" to get ALL entries
-            // from the beginning of the journal, not just recent ones.
-            // The "@0" is Unix epoch timestamp which journalctl interprets as "from the start".
-            let filter = JournalFilter {
-                after_cursor: last_cursor.clone(),
-                since: if last_cursor.is_none() { Some("@0".to_string()) } else { None },
-                limit: SYNC_BATCH_SIZE,
-                reverse: false, // Oldest first for proper ordering
-                ..Default::default()
-            };
+            let mut last_cursor: Option<String> = None;
 
-            // Fetch batch from remote
-            let result = match RemoteJournalReader::query(conn, &filter) {
-                Ok(r) => r,
-                Err(e) => {
-                    sync_error = Some(format!("Failed to fetch entries: {}", e));
+            // Fetch all entries for this boot in batches
+            loop {
+                // Check for cancellation
+                if cancel_flag.load(Ordering::SeqCst) {
+                    was_cancelled = true;
                     break;
                 }
-            };
 
-            // No more entries - sync complete
-            if result.entries.is_empty() {
-                break;
-            }
+                // Build filter for this batch
+                let filter = JournalFilter {
+                    boot_id: Some(boot.boot_id.clone()),
+                    after_cursor: last_cursor.clone(),
+                    limit: SYNC_BATCH_SIZE,
+                    reverse: false, // Oldest first for proper ordering
+                    ..Default::default()
+                };
 
-            let batch_size = result.entries.len();
+                // Fetch batch from remote
+                let result = match RemoteJournalReader::query(conn, &filter) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        sync_error = Some(format!("Failed to fetch entries for boot {}: {}", boot.boot_id, e));
+                        break;
+                    }
+                };
 
-            // Insert entries into database
-            match db.insert_entries(host_id, &result.entries) {
-                Ok(inserted) => {
-                    entries_synced += inserted as i64;
+                // No more entries for this boot
+                if result.entries.is_empty() {
+                    break;
                 }
-                Err(e) => {
-                    sync_error = Some(format!("Failed to insert entries: {}", e));
+
+                let batch_size = result.entries.len();
+
+                // Insert entries into database
+                match db.insert_entries(host_id, &result.entries) {
+                    Ok(inserted) => {
+                        entries_synced += inserted as i64;
+                    }
+                    Err(e) => {
+                        sync_error = Some(format!("Failed to insert entries: {}", e));
+                        break;
+                    }
+                }
+
+                // Update cursor for next batch
+                last_cursor = result.cursor_end.clone();
+
+                // Update sync state
+                sync_state.last_cursor = last_cursor.clone();
+                sync_state.last_sync_timestamp = now_millis();
+                sync_state.entries_synced += batch_size as i64;
+
+                if let Err(e) = db.update_sync_state(&sync_state) {
+                    sync_error = Some(format!("Failed to update sync state: {}", e));
+                    break;
+                }
+
+                // Emit progress event
+                if let Some(handle) = app_handle {
+                    let _ = handle.emit(
+                        "sync-progress",
+                        SyncProgressEvent {
+                            host_id: host_id.to_string(),
+                            status: SyncProgressStatus::Fetching,
+                            entries_synced,
+                            total_entries: sync_state.entries_synced,
+                            batch_size,
+                            error: None,
+                        },
+                    );
+                }
+
+                // No more entries available for this boot
+                if !result.has_more {
                     break;
                 }
             }
 
-            // Update cursor for next batch
-            last_cursor = result.cursor_end.clone();
-
-            // Update sync state
-            sync_state.last_cursor = last_cursor.clone();
-            sync_state.last_sync_timestamp = now_millis();
-            sync_state.entries_synced += batch_size as i64;
-
-            if let Err(e) = db.update_sync_state(&sync_state) {
-                sync_error = Some(format!("Failed to update sync state: {}", e));
-                break;
-            }
-
-            // Emit progress event
-            if let Some(handle) = app_handle {
-                let _ = handle.emit(
-                    "sync-progress",
-                    SyncProgressEvent {
-                        host_id: host_id.to_string(),
-                        status: SyncProgressStatus::Fetching,
-                        entries_synced,
-                        total_entries: sync_state.entries_synced,
-                        batch_size,
-                        error: None,
-                    },
-                );
-            }
-
-            // No more entries available
-            if !result.has_more {
+            // Break outer loop if we hit an error or cancellation
+            if sync_error.is_some() || was_cancelled {
                 break;
             }
         }

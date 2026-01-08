@@ -198,11 +198,7 @@ pub fn delete_offline_logs(
 
 /// Apply retention policy to a specific host.
 ///
-/// Enforces the specified retention policy by deleting old entries:
-/// - `days`: Delete entries older than X days
-/// - `boots`: Keep only last X boot_ids per host
-/// - `size`: Delete oldest entries when DB exceeds X MB
-/// - `unlimited`: No cleanup
+/// Keeps only the last N boots per host, deleting entries from older boots.
 ///
 /// Returns details about what was deleted.
 #[tauri::command]
@@ -221,8 +217,7 @@ pub fn apply_retention_now(
 
 /// Apply retention policy to all hosts.
 ///
-/// For size-based retention, operates globally.
-/// For days and boots retention, applies to each host.
+/// Keeps only the last N boots per host, deleting entries from older boots.
 ///
 /// Returns results for each host affected.
 #[tauri::command]

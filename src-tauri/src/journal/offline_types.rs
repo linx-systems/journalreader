@@ -6,71 +6,18 @@ use serde::{Deserialize, Serialize};
 // Retention Policy Types
 // ============================================================================
 
-/// Retention mode determining how old entries are cleaned up.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum RetentionMode {
-    /// Delete entries older than X days
-    Days,
-    /// Keep only the last X boot_ids per host
-    Boots,
-    /// Delete oldest entries when database exceeds X MB
-    Size,
-    /// No automatic cleanup
-    Unlimited,
-}
-
-impl Default for RetentionMode {
-    fn default() -> Self {
-        RetentionMode::Days
-    }
-}
-
-impl From<&str> for RetentionMode {
-    fn from(s: &str) -> Self {
-        match s {
-            "days" => RetentionMode::Days,
-            "boots" => RetentionMode::Boots,
-            "size" => RetentionMode::Size,
-            "unlimited" => RetentionMode::Unlimited,
-            _ => RetentionMode::Days,
-        }
-    }
-}
-
-impl RetentionMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RetentionMode::Days => "days",
-            RetentionMode::Boots => "boots",
-            RetentionMode::Size => "size",
-            RetentionMode::Unlimited => "unlimited",
-        }
-    }
-}
-
 /// Retention policy configuration for automatic cleanup of old journal entries.
+/// Only boot-based retention is supported - keeps the last N boots per host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RetentionPolicy {
-    /// The retention mode (days, boots, size, unlimited)
-    pub mode: RetentionMode,
-    /// Number of days to keep entries (used when mode is Days)
-    pub days: Option<u32>,
-    /// Number of boot_ids to keep per host (used when mode is Boots)
-    pub boots: Option<u32>,
-    /// Maximum database size in MB (used when mode is Size)
-    pub max_mb: Option<u64>,
+    /// Number of boot_ids to keep per host (default: 5)
+    pub boots: u32,
 }
 
 impl Default for RetentionPolicy {
     fn default() -> Self {
-        Self {
-            mode: RetentionMode::Days,
-            days: Some(30),
-            boots: None,
-            max_mb: None,
-        }
+        Self { boots: 5 }
     }
 }
 
@@ -82,8 +29,8 @@ pub struct RetentionResult {
     pub host_id: String,
     /// Number of entries deleted
     pub entries_deleted: u64,
-    /// Retention mode that was applied
-    pub mode: RetentionMode,
+    /// Number of boots kept
+    pub boots_kept: u32,
     /// Error message if cleanup failed
     pub error: Option<String>,
 }
@@ -183,10 +130,8 @@ pub struct StorageStats {
 pub struct OfflineSettings {
     /// Whether offline mode is enabled for this host
     pub enabled: bool,
-    /// Retention period in days (0 = no limit)
-    pub retention_days: u32,
-    /// Maximum entries to store (0 = no limit)
-    pub max_entries: u64,
+    /// Number of boots to sync and retain (default: 5)
+    pub sync_boots: u32,
     /// Whether to sync automatically when connected
     pub auto_sync: bool,
 }
@@ -195,8 +140,7 @@ impl Default for OfflineSettings {
     fn default() -> Self {
         Self {
             enabled: true,
-            retention_days: 30,
-            max_entries: 100_000,
+            sync_boots: 5,
             auto_sync: true,
         }
     }
@@ -238,35 +182,14 @@ mod tests {
     fn test_offline_settings_default() {
         let settings = OfflineSettings::default();
         assert!(settings.enabled);
-        assert_eq!(settings.retention_days, 30);
-        assert_eq!(settings.max_entries, 100_000);
+        assert_eq!(settings.sync_boots, 5);
         assert!(settings.auto_sync);
-    }
-
-    #[test]
-    fn test_retention_mode_from_str() {
-        assert_eq!(RetentionMode::from("days"), RetentionMode::Days);
-        assert_eq!(RetentionMode::from("boots"), RetentionMode::Boots);
-        assert_eq!(RetentionMode::from("size"), RetentionMode::Size);
-        assert_eq!(RetentionMode::from("unlimited"), RetentionMode::Unlimited);
-        assert_eq!(RetentionMode::from("unknown"), RetentionMode::Days);
-    }
-
-    #[test]
-    fn test_retention_mode_as_str() {
-        assert_eq!(RetentionMode::Days.as_str(), "days");
-        assert_eq!(RetentionMode::Boots.as_str(), "boots");
-        assert_eq!(RetentionMode::Size.as_str(), "size");
-        assert_eq!(RetentionMode::Unlimited.as_str(), "unlimited");
     }
 
     #[test]
     fn test_retention_policy_default() {
         let policy = RetentionPolicy::default();
-        assert_eq!(policy.mode, RetentionMode::Days);
-        assert_eq!(policy.days, Some(30));
-        assert!(policy.boots.is_none());
-        assert!(policy.max_mb.is_none());
+        assert_eq!(policy.boots, 5);
     }
 
     #[test]
@@ -274,12 +197,12 @@ mod tests {
         let result = RetentionResult {
             host_id: "host-1".to_string(),
             entries_deleted: 100,
-            mode: RetentionMode::Days,
+            boots_kept: 5,
             error: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"hostId\":\"host-1\""));
         assert!(json.contains("\"entriesDeleted\":100"));
-        assert!(json.contains("\"mode\":\"days\""));
+        assert!(json.contains("\"bootsKept\":5"));
     }
 }

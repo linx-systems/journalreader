@@ -261,15 +261,22 @@ impl RemoteJournalReader {
 
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
-                let offset = parts[0].parse::<i32>().unwrap_or(0);
+                // Skip header row (starts with "IDX" or first column is non-numeric)
+                let offset = match parts[0].parse::<i32>() {
+                    Ok(o) => o,
+                    Err(_) => continue, // Skip header or invalid lines
+                };
                 let boot_id = parts[1].to_string();
 
-                boots.push(BootInfo {
-                    boot_id,
-                    boot_offset: offset,
-                    first_entry: None,
-                    last_entry: None,
-                });
+                // Validate boot_id looks like a UUID (32 hex chars)
+                if boot_id.len() == 32 && boot_id.chars().all(|c| c.is_ascii_hexdigit()) {
+                    boots.push(BootInfo {
+                        boot_id,
+                        boot_offset: offset,
+                        first_entry: None,
+                        last_entry: None,
+                    });
+                }
             }
         }
 

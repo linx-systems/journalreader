@@ -359,14 +359,9 @@ impl OfflineDatabase {
         if let Ok(enabled) = self.get_setting("enabled") {
             settings.enabled = enabled == "true";
         }
-        if let Ok(retention) = self.get_setting("retention_days") {
-            if let Ok(days) = retention.parse::<u32>() {
-                settings.retention_days = days;
-            }
-        }
-        if let Ok(max) = self.get_setting("max_entries") {
-            if let Ok(entries) = max.parse::<u64>() {
-                settings.max_entries = entries;
+        if let Ok(sync_boots) = self.get_setting("sync_boots") {
+            if let Ok(boots) = sync_boots.parse::<u32>() {
+                settings.sync_boots = boots;
             }
         }
         if let Ok(auto_sync) = self.get_setting("auto_sync") {
@@ -379,8 +374,7 @@ impl OfflineDatabase {
     /// Update offline settings.
     pub fn update_offline_settings(&self, settings: &OfflineSettings) -> Result<(), JournalError> {
         self.set_setting("enabled", &settings.enabled.to_string())?;
-        self.set_setting("retention_days", &settings.retention_days.to_string())?;
-        self.set_setting("max_entries", &settings.max_entries.to_string())?;
+        self.set_setting("sync_boots", &settings.sync_boots.to_string())?;
         self.set_setting("auto_sync", &settings.auto_sync.to_string())?;
         Ok(())
     }
@@ -1028,15 +1022,13 @@ mod tests {
         // Initially should return default settings
         let settings = db.get_offline_settings().unwrap();
         assert!(settings.enabled);
-        assert_eq!(settings.retention_days, 30);
-        assert_eq!(settings.max_entries, 100_000);
+        assert_eq!(settings.sync_boots, 5);
         assert!(settings.auto_sync);
 
         // Update settings
         let new_settings = OfflineSettings {
             enabled: false,
-            retention_days: 7,
-            max_entries: 50_000,
+            sync_boots: 10,
             auto_sync: false,
         };
         db.update_offline_settings(&new_settings).unwrap();
@@ -1044,8 +1036,7 @@ mod tests {
         // Verify update
         let settings = db.get_offline_settings().unwrap();
         assert!(!settings.enabled);
-        assert_eq!(settings.retention_days, 7);
-        assert_eq!(settings.max_entries, 50_000);
+        assert_eq!(settings.sync_boots, 10);
         assert!(!settings.auto_sync);
     }
 }
