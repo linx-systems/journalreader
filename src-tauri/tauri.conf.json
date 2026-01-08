@@ -47,7 +47,6 @@
   "plugins": {
     "shell": {
       "open": true
-    },
-    "notification": {}
+    }
   }
 }

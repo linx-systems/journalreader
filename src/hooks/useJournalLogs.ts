@@ -45,8 +45,9 @@ export function useJournalLogs() {
   const { connectedHostId, connectionStatus } = useConnectionStore();
   const { isOfflineMode, setOfflineMode } = useOfflineStore();
   const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
-  // Determine if we're effectively offline (explicit mode or disconnected)
-  const isEffectivelyOffline = isOfflineMode || connectionStatus !== 'connected';
+  // Determine if we're effectively offline - only applies when connected to a remote host
+  // Local logs are always available directly, they don't need offline mode
+  const isEffectivelyOffline = connectedHostId !== null && (isOfflineMode || connectionStatus !== 'connected');
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
