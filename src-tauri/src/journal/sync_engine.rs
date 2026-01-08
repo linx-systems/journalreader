@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
+use tauri_plugin_notification::NotificationExt;
 
 /// Default batch size for fetching entries during sync
 const SYNC_BATCH_SIZE: u32 = 1000;
@@ -82,6 +83,16 @@ fn now_millis() -> i64 {
 pub struct SyncEngine;
 
 impl SyncEngine {
+    /// Send a desktop notification for sync completion or failure.
+    fn send_notification(app_handle: &AppHandle, title: &str, body: &str) {
+        let _ = app_handle
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
+    }
+
     /// Sync journal entries from a remote host.
     ///
     /// This method implements incremental sync by:
@@ -93,6 +104,7 @@ impl SyncEngine {
     ///
     /// # Arguments
     /// * `host_id` - The ID of the host to sync
+    /// * `host_name` - Display name of the host (for notifications)
     /// * `conn` - The SSH connection manager
     /// * `db` - The offline database
     /// * `cancel_flag` - Atomic flag to cancel the sync
@@ -102,6 +114,7 @@ impl SyncEngine {
     /// A `SyncResult` indicating the outcome of the sync operation
     pub fn sync_host(
         host_id: &str,
+        host_name: &str,
         conn: &ConnectionManager,
         db: &OfflineDatabase,
         cancel_flag: Arc<AtomicBool>,
@@ -260,13 +273,32 @@ impl SyncEngine {
                 "sync-progress",
                 SyncProgressEvent {
                     host_id: host_id.to_string(),
-                    status: final_status,
+                    status: final_status.clone(),
                     entries_synced,
                     total_entries: sync_state.entries_synced,
                     batch_size: 0,
                     error: sync_error.clone(),
                 },
             );
+
+            // Send desktop notification for completed or failed syncs
+            match final_status {
+                SyncProgressStatus::Completed => {
+                    Self::send_notification(
+                        handle,
+                        "Sync Complete",
+                        &format!("{} entries synced from {}", entries_synced, host_name),
+                    );
+                }
+                SyncProgressStatus::Error => {
+                    let error_msg = sync_error
+                        .as_ref()
+                        .map(|e| e.as_str())
+                        .unwrap_or("Unknown error");
+                    Self::send_notification(handle, "Sync Failed", error_msg);
+                }
+                _ => {}
+            }
         }
 
         SyncResult {
@@ -285,13 +317,14 @@ impl SyncEngine {
     /// resume from the last saved cursor position.
     pub fn resume_sync(
         host_id: &str,
+        host_name: &str,
         conn: &ConnectionManager,
         db: &OfflineDatabase,
         cancel_flag: Arc<AtomicBool>,
         app_handle: Option<&AppHandle>,
     ) -> SyncResult {
         // Resume is the same as sync - the cursor position is preserved
-        Self::sync_host(host_id, conn, db, cancel_flag, app_handle)
+        Self::sync_host(host_id, host_name, conn, db, cancel_flag, app_handle)
     }
 
     /// Check if a sync can be resumed for a host.
@@ -467,7 +500,7 @@ mod tests {
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
         // Sync without a connection should fail
-        let result = SyncEngine::sync_host("host-1", &conn, &db, cancel_flag, None);
+        let result = SyncEngine::sync_host("host-1", "Test Host", &conn, &db, cancel_flag, None);
 
         assert!(!result.success);
         assert!(result.error.is_some());
@@ -481,7 +514,7 @@ mod tests {
         let cancel_flag = Arc::new(AtomicBool::new(true)); // Already cancelled
 
         // Sync should stop immediately due to cancellation
-        let result = SyncEngine::sync_host("host-1", &conn, &db, cancel_flag, None);
+        let result = SyncEngine::sync_host("host-1", "Test Host", &conn, &db, cancel_flag, None);
 
         assert!(!result.success);
         assert!(result.cancelled);

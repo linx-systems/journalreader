@@ -42,16 +42,17 @@ pub async fn trigger_sync(
     cancel_state: State<'_, SyncCancelState>,
     app_handle: AppHandle,
 ) -> Result<SyncResult, JournalError> {
-    // Verify host exists
-    {
+    // Verify host exists and get its name
+    let host_name = {
         let storage = host_state
             .0
             .lock()
             .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire host lock: {}", e)))?;
-        if storage.get(&host_id).is_none() {
-            return Err(JournalError::HostNotFound(host_id));
+        match storage.get(&host_id) {
+            Some(host) => host.name.clone(),
+            None => return Err(JournalError::HostNotFound(host_id)),
         }
-    }
+    };
 
     // Create or get cancellation flag for this host
     let cancel_flag = {
@@ -72,6 +73,7 @@ pub async fn trigger_sync(
     let conn_manager = conn_state.0.clone();
     let db = db_state.0.clone();
     let host_id_clone = host_id.clone();
+    let host_name_clone = host_name.clone();
     let sync_app_handle = app_handle.clone();
 
     // Run sync in a blocking task
@@ -89,6 +91,7 @@ pub async fn trigger_sync(
         // Run the sync
         Ok::<SyncResult, JournalError>(SyncEngine::sync_host(
             &host_id_clone,
+            &host_name_clone,
             &manager,
             &database,
             cancel_flag,
@@ -165,6 +168,7 @@ pub async fn trigger_sync_all(
         let conn_manager = conn_state.0.clone();
         let db = db_state.0.clone();
         let host_id = host.id.clone();
+        let host_name = host.name.clone();
         let handle = app_handle.clone();
 
         // Run sync in a blocking task
@@ -179,6 +183,7 @@ pub async fn trigger_sync_all(
 
             Ok::<SyncResult, JournalError>(SyncEngine::sync_host(
                 &host_id,
+                &host_name,
                 &manager,
                 &database,
                 cancel_flag,
