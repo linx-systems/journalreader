@@ -23,6 +23,10 @@ let globalUnlistenEntry: UnlistenFn | null = null;
 let globalUnlistenError: UnlistenFn | null = null;
 let globalUnlistenStopped: UnlistenFn | null = null;
 
+// Global state for filter change handling (singleton - only one instance should handle restarts)
+let filterChangeHandlerRegistered = false;
+let lastFilterKey: string | null = null;
+
 async function setupListeners(
   prependEntries: (entries: any[]) => void,
   setError: (error: string | null) => void,
@@ -92,8 +96,6 @@ export function useFollowMode() {
   const connectedHostIdRef = useRef(connectedHostId);
   isRemoteRef.current = isRemote;
   connectedHostIdRef.current = connectedHostId;
-
-  const isFirstMount = useRef(true);
 
   // Start follow mode
   const start = useCallback(async () => {
@@ -186,22 +188,24 @@ export function useFollowMode() {
   // Restart follow mode when filter changes (to apply new filters)
   // Use JSON stringification to detect actual filter changes (not reference changes)
   const filterKey = useMemo(() => getFilterKey(filter), [filter]);
-  const filterKeyRef = useRef(filterKey);
 
   useEffect(() => {
-    // Skip the initial render
-    if (isFirstMount.current) {
-      isFirstMount.current = false;
-      filterKeyRef.current = filterKey;
-      return;
+    // Only one hook instance should handle filter changes (singleton pattern)
+    // The first instance to register becomes the handler
+    if (!filterChangeHandlerRegistered) {
+      filterChangeHandlerRegistered = true;
+      lastFilterKey = filterKey;
     }
 
-    // Check if filter actually changed (deep comparison via JSON key)
-    if (filterKeyRef.current === filterKey) return;
-    filterKeyRef.current = filterKey;
+    // Check if filter actually changed (using global state for singleton behavior)
+    if (lastFilterKey === filterKey) return;
 
-    // If following, restart with the new filter
-    if (isFollowing) {
+    // Update the global filter key
+    const previousKey = lastFilterKey;
+    lastFilterKey = filterKey;
+
+    // If following, restart with the new filter (only once, not per-instance)
+    if (isFollowing && previousKey !== null) {
       console.log('[useFollowMode] Filter changed while following, restarting with:', filter);
       const restartFollow = async () => {
         if (isRemoteRef.current) {
