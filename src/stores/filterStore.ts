@@ -64,10 +64,18 @@ export const useFilterStore = create<FilterState>((set) => ({
     })),
 
   // Add new entries at the beginning (for follow mode with newest-first display)
+  // Deduplicate by cursor to prevent duplicate entries from overlapping
   prependEntries: (newEntries) =>
-    set((state) => ({
-      entries: [...newEntries, ...state.entries],
-    })),
+    set((state) => {
+      // Create a Set of existing cursors for O(1) lookup
+      const existingCursors = new Set(state.entries.map(e => e.cursor));
+      // Filter out any entries that already exist
+      const uniqueNewEntries = newEntries.filter(e => !existingCursors.has(e.cursor));
+      if (uniqueNewEntries.length === 0) return state;
+      return {
+        entries: [...uniqueNewEntries, ...state.entries],
+      };
+    }),
 
   setLoading: (isLoading) => set({ isLoading }),
 
