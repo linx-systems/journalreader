@@ -97,6 +97,8 @@ export function useFollowMode() {
 
   // Start follow mode
   const start = useCallback(async () => {
+    console.log('[useFollowMode] start() called with filter:', filter);
+    console.log('[useFollowMode] isRemote:', isRemoteRef.current);
     try {
       // Set up listeners if not already done
       await setupListeners(prependEntries, setError, setFollowing);
@@ -112,6 +114,7 @@ export function useFollowMode() {
           const savedPassword = await getHostPassword(hostId);
           password = savedPassword ?? undefined;
         }
+        console.log('[useFollowMode] Calling startRemoteFollow with filter:', filter);
         await startRemoteFollow(filter, password);
       } else {
         await startFollow(filter);
