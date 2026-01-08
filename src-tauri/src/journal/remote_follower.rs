@@ -341,6 +341,7 @@ impl RemoteJournalFollower {
     }
 
     fn build_follow_command(host: &RemoteHost, filter: &JournalFilter) -> String {
+        eprintln!("[RemoteFollower] Building follow command with filter: {:?}", filter);
         let mut args = vec!["journalctl".to_string()];
         args.push("-o".to_string());
         args.push("json".to_string());
@@ -390,11 +391,13 @@ impl RemoteJournalFollower {
         }
 
         let cmd = args.join(" ");
-        if host.sudo_required {
+        let final_cmd = if host.sudo_required {
             format!("sudo {}", cmd)
         } else {
             cmd
-        }
+        };
+        eprintln!("[RemoteFollower] Final command: {}", final_cmd);
+        final_cmd
     }
 
     fn stop_internal(&mut self) {

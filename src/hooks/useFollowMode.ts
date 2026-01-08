@@ -199,6 +199,7 @@ export function useFollowMode() {
 
     // If following, restart with the new filter
     if (isFollowing) {
+      console.log('[useFollowMode] Filter changed while following, restarting with:', filter);
       const restartFollow = async () => {
         if (isRemoteRef.current) {
           // Retrieve password from keyring for remote follow
@@ -208,8 +209,10 @@ export function useFollowMode() {
             const savedPassword = await getHostPassword(hostId);
             password = savedPassword ?? undefined;
           }
+          console.log('[useFollowMode] Restarting remote follow with filter:', filter);
           await startRemoteFollow(filter, password);
         } else {
+          console.log('[useFollowMode] Restarting local follow with filter:', filter);
           await startFollow(filter);
         }
       };
