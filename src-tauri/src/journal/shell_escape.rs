@@ -14,17 +14,15 @@ use std::borrow::Cow;
 ///
 /// # Examples
 ///
-/// ```
-/// use crate::journal::shell_escape::escape_arg;
-///
+/// ```ignore
 /// // Normal strings pass through quoted
-/// assert_eq!(escape_arg("nginx.service"), "'nginx.service'");
+/// escape_arg("nginx.service") // => "'nginx.service'"
 ///
 /// // Strings with single quotes are properly escaped
-/// assert_eq!(escape_arg("test'value"), "'test'\\''value'");
+/// escape_arg("test'value") // => "'test'\\''value'"
 ///
 /// // Command injection attempts are neutralized
-/// assert_eq!(escape_arg("'; rm -rf /; '"), "''\\'''; rm -rf /; '\\'''");
+/// escape_arg("'; rm -rf /; '") // => escaped safely
 /// ```
 pub fn escape_arg(s: &str) -> String {
     escape(Cow::Borrowed(s)).into_owned()

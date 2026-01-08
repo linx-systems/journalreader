@@ -86,3 +86,44 @@ it("imports and exports bookmarks", () => {
   const exported = store.exportBookmarks();
   expect(exported).toEqual(state.bookmarks);
 });
+
+it("deleting a different bookmark does not clear active selection", () => {
+  const store = useBookmarkStore.getState();
+  const first = store.addBookmark("First", {});
+  const second = store.addBookmark("Second", {});
+  store.setActiveBookmark(first.id);
+
+  store.deleteBookmark(second.id);
+
+  const state = useBookmarkStore.getState();
+  expect(state.bookmarks).toHaveLength(1);
+  expect(state.activeBookmarkId).toBe(first.id);
+});
+
+it("getBookmarkByIndex returns undefined for out of bounds", () => {
+  const store = useBookmarkStore.getState();
+  expect(store.getBookmarkByIndex(99)).toBeUndefined();
+});
+
+it("importBookmarks filters out bookmarks with null filters", () => {
+  const store = useBookmarkStore.getState();
+  const withNullFilters = {
+    id: "import-null",
+    name: "Null Filters",
+    filters: null,
+    createdAt: 1,
+  };
+
+  store.importBookmarks([withNullFilters as unknown as Bookmark]);
+
+  const state = useBookmarkStore.getState();
+  expect(state.bookmarks).toHaveLength(0);
+});
+
+it("importBookmarks filters out null and undefined values", () => {
+  const store = useBookmarkStore.getState();
+  store.importBookmarks([null, undefined] as unknown as Bookmark[]);
+
+  const state = useBookmarkStore.getState();
+  expect(state.bookmarks).toHaveLength(0);
+});

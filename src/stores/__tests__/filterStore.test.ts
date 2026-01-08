@@ -87,3 +87,36 @@ it("resetFilter clears state", () => {
   expect(state.hasMore).toBe(false);
   expect(state.error).toBeNull();
 });
+
+it("setLoading updates isLoading state", () => {
+  const store = useFilterStore.getState();
+  expect(store.isLoading).toBe(false);
+
+  store.setLoading(true);
+  expect(useFilterStore.getState().isLoading).toBe(true);
+
+  store.setLoading(false);
+  expect(useFilterStore.getState().isLoading).toBe(false);
+});
+
+it("setError updates error state", () => {
+  const store = useFilterStore.getState();
+  expect(store.error).toBeNull();
+
+  store.setError("Something went wrong");
+  expect(useFilterStore.getState().error).toBe("Something went wrong");
+
+  store.setError(null);
+  expect(useFilterStore.getState().error).toBeNull();
+});
+
+it("setFollowPaused updates isFollowPaused state", () => {
+  const store = useFilterStore.getState();
+  expect(store.isFollowPaused).toBe(false);
+
+  store.setFollowPaused(true);
+  expect(useFilterStore.getState().isFollowPaused).toBe(true);
+
+  store.setFollowPaused(false);
+  expect(useFilterStore.getState().isFollowPaused).toBe(false);
+});

@@ -31,7 +31,7 @@ it("setTheme updates currentThemeId and disables followSystem", () => {
   expect(state.followSystem).toBe(false);
 });
 
-it("followSystem uses system theme preference", () => {
+it("followSystem uses system dark theme preference", () => {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: true,
     media: query,
@@ -48,6 +48,25 @@ it("followSystem uses system theme preference", () => {
 
   const theme = store.getCurrentTheme();
   expect(theme.id).toBe("dark");
+});
+
+it("followSystem uses system light theme preference", () => {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+    addListener: () => {},
+    removeListener: () => {},
+  }));
+
+  const store = useThemeStore.getState();
+  store.setFollowSystem(true);
+
+  const theme = store.getCurrentTheme();
+  expect(theme.id).toBe("light");
 });
 
 it("adds and updates custom themes", () => {
@@ -93,4 +112,58 @@ it("importTheme adds a validated theme with a new id", () => {
   const imported = state.customThemes.find((t) => t.id === `imported-${Date.now()}`);
   expect(imported).toBeDefined();
   expect(imported?.isBuiltIn).toBe(false);
+});
+
+it("getCurrentTheme falls back to dark theme when current theme not found", () => {
+  const store = useThemeStore.getState();
+  // Set an invalid theme ID
+  useThemeStore.setState({ currentThemeId: "non-existent-theme" });
+
+  const theme = store.getCurrentTheme();
+  expect(theme.id).toBe("dark");
+});
+
+it("addCustomTheme does nothing when theme validation fails", () => {
+  const store = useThemeStore.getState();
+  const invalidTheme = { id: "invalid" } as never;
+  store.addCustomTheme(invalidTheme);
+
+  const state = useThemeStore.getState();
+  expect(state.customThemes).toHaveLength(0);
+});
+
+it("deleteCustomTheme does nothing when trying to delete built-in theme", () => {
+  const store = useThemeStore.getState();
+  // Try to delete a built-in theme by ID - should do nothing
+  store.deleteCustomTheme("light");
+
+  const themes = store.getAllThemes();
+  expect(themes.find((t) => t.id === "light")).toBeDefined();
+});
+
+it("deleteCustomTheme does nothing when theme not found", () => {
+  const store = useThemeStore.getState();
+  const custom = createCustomTheme(LIGHT_THEME, { id: "custom-to-delete", name: "Will Delete" });
+  store.addCustomTheme(custom);
+
+  // Try to delete non-existent theme
+  store.deleteCustomTheme("non-existent");
+
+  const state = useThemeStore.getState();
+  expect(state.customThemes).toHaveLength(1);
+});
+
+it("duplicateTheme returns null when theme not found", () => {
+  const store = useThemeStore.getState();
+  const result = store.duplicateTheme("non-existent-theme");
+  expect(result).toBeNull();
+});
+
+it("importTheme does nothing when theme validation fails", () => {
+  const store = useThemeStore.getState();
+  const invalidTheme = { id: "invalid" } as never;
+  store.importTheme(invalidTheme);
+
+  const state = useThemeStore.getState();
+  expect(state.customThemes).toHaveLength(0);
 });
