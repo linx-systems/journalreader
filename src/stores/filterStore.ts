@@ -82,13 +82,26 @@ export const useFilterStore = create<FilterState>((set) => ({
     })),
 
   // Add new entries at the beginning (for follow mode with newest-first display)
-  // Deduplicate by cursor to prevent duplicate entries from overlapping
+  // Deduplicate by cursor and filter by current priority settings
   prependEntries: (newEntries) =>
     set((state) => {
       // Create a Set of existing cursors for O(1) lookup
       const existingCursors = new Set(state.entries.map(e => e.cursor));
-      // Filter out any entries that already exist
-      const uniqueNewEntries = newEntries.filter(e => !existingCursors.has(e.cursor));
+
+      // Get valid priorities from current filter (if set)
+      const validPriorities = state.filter.priorities?.length
+        ? new Set(state.filter.priorities)
+        : null;
+
+      // Filter out entries that already exist OR don't match priority filter
+      const uniqueNewEntries = newEntries.filter(e => {
+        // Skip if already exists
+        if (existingCursors.has(e.cursor)) return false;
+        // Skip if doesn't match priority filter (when filter is active)
+        if (validPriorities && !validPriorities.has(e.priority)) return false;
+        return true;
+      });
+
       if (uniqueNewEntries.length === 0) return state;
       return {
         entries: [...uniqueNewEntries, ...state.entries],
