@@ -7,6 +7,7 @@ import {
   stopFollow,
   startRemoteFollow,
   stopRemoteFollow,
+  getHostPassword,
 } from '../lib/tauri';
 import { logError } from '../lib/errorLogger';
 import type { FollowEvent, FollowErrorEvent } from '../lib/types';
@@ -83,14 +84,14 @@ export function useFollowMode() {
     setError,
   } = useFilterStore();
 
-  const { connectedHostId, connectionStatus, sessionPassword } = useConnectionStore();
+  const { connectedHostId, connectionStatus } = useConnectionStore();
   const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
 
   // Use refs to track state in callbacks without re-creating them
   const isRemoteRef = useRef(isRemote);
-  const sessionPasswordRef = useRef(sessionPassword);
+  const connectedHostIdRef = useRef(connectedHostId);
   isRemoteRef.current = isRemote;
-  sessionPasswordRef.current = sessionPassword;
+  connectedHostIdRef.current = connectedHostId;
 
   const isFirstMount = useRef(true);
 
@@ -102,7 +103,16 @@ export function useFollowMode() {
 
       // Start the follow process in Rust (remote or local)
       if (isRemoteRef.current) {
-        await startRemoteFollow(filter, sessionPasswordRef.current ?? undefined);
+        // For remote connections, retrieve password from keyring if available
+        // The session password is cleared after initial connection, so we need
+        // to get it from the keyring for the follow mode's separate SSH connection
+        const hostId = connectedHostIdRef.current;
+        let password: string | undefined;
+        if (hostId) {
+          const savedPassword = await getHostPassword(hostId);
+          password = savedPassword ?? undefined;
+        }
+        await startRemoteFollow(filter, password);
       } else {
         await startFollow(filter);
       }
@@ -189,11 +199,22 @@ export function useFollowMode() {
 
     // If following, restart with the new filter
     if (isFollowing) {
-      const startFn = isRemoteRef.current
-        ? () => startRemoteFollow(filter, sessionPasswordRef.current ?? undefined)
-        : () => startFollow(filter);
+      const restartFollow = async () => {
+        if (isRemoteRef.current) {
+          // Retrieve password from keyring for remote follow
+          const hostId = connectedHostIdRef.current;
+          let password: string | undefined;
+          if (hostId) {
+            const savedPassword = await getHostPassword(hostId);
+            password = savedPassword ?? undefined;
+          }
+          await startRemoteFollow(filter, password);
+        } else {
+          await startFollow(filter);
+        }
+      };
 
-      startFn().catch((err) => {
+      restartFollow().catch((err) => {
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(`Failed to update follow filter: ${errorMessage}`);
         setFollowing(false);
