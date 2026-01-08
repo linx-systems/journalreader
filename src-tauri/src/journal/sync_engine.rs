@@ -16,6 +16,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
+// Re-export retention types for convenience
+pub use crate::journal::offline_types::{RetentionMode, RetentionPolicy, RetentionResult};
+
 /// Default batch size for fetching entries during sync
 const SYNC_BATCH_SIZE: u32 = 1000;
 
@@ -271,6 +274,16 @@ impl SyncEngine {
         // Best-effort update of final state
         let _ = db.update_sync_state(&sync_state);
 
+        // Apply retention policy after successful sync
+        let mut retention_deleted: u64 = 0;
+        if final_status == SyncProgressStatus::Completed {
+            if let Ok(policy) = db.get_retention_policy() {
+                if let Ok(deleted) = db.apply_retention(host_id, &policy) {
+                    retention_deleted = deleted;
+                }
+            }
+        }
+
         // Emit final progress event
         if let Some(handle) = app_handle {
             let _ = handle.emit(
@@ -288,11 +301,15 @@ impl SyncEngine {
             // Send desktop notification for completed or failed syncs
             match final_status {
                 SyncProgressStatus::Completed => {
-                    Self::send_notification(
-                        handle,
-                        "Sync Complete",
-                        &format!("{} entries synced from {}", entries_synced, host_name),
-                    );
+                    let message = if retention_deleted > 0 {
+                        format!(
+                            "{} entries synced from {} ({} old entries cleaned up)",
+                            entries_synced, host_name, retention_deleted
+                        )
+                    } else {
+                        format!("{} entries synced from {}", entries_synced, host_name)
+                    };
+                    Self::send_notification(handle, "Sync Complete", &message);
                 }
                 SyncProgressStatus::Error => {
                     let error_msg = sync_error

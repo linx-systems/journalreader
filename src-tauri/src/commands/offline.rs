@@ -6,7 +6,10 @@
 
 use crate::commands::remote::OfflineDatabaseState;
 use crate::error::JournalError;
-use crate::journal::{JournalFilter, JournalQueryResult, OfflineSettings, StorageStats, SyncState, SyncStatus};
+use crate::journal::{
+    JournalFilter, JournalQueryResult, OfflineSettings, RetentionPolicy, RetentionResult,
+    StorageStats, SyncState, SyncStatus,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
 
@@ -167,6 +170,65 @@ pub fn delete_offline_logs(
     db.update_sync_state(&reset_state)?;
 
     Ok(deleted as u64)
+}
+
+// ============================================================================
+// Retention Commands
+// ============================================================================
+
+/// Apply retention policy to a specific host.
+///
+/// Enforces the specified retention policy by deleting old entries:
+/// - `days`: Delete entries older than X days
+/// - `boots`: Keep only last X boot_ids per host
+/// - `size`: Delete oldest entries when DB exceeds X MB
+/// - `unlimited`: No cleanup
+///
+/// Returns details about what was deleted.
+#[tauri::command]
+pub fn apply_retention_now(
+    host_id: String,
+    policy: RetentionPolicy,
+    state: State<'_, OfflineDatabaseState>,
+) -> Result<RetentionResult, JournalError> {
+    let db = state
+        .0
+        .lock()
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
+
+    Ok(db.apply_retention_with_result(&host_id, &policy))
+}
+
+/// Apply retention policy to all hosts.
+///
+/// For size-based retention, operates globally.
+/// For days and boots retention, applies to each host.
+///
+/// Returns results for each host affected.
+#[tauri::command]
+pub fn apply_retention_all(
+    policy: RetentionPolicy,
+    state: State<'_, OfflineDatabaseState>,
+) -> Result<Vec<RetentionResult>, JournalError> {
+    let db = state
+        .0
+        .lock()
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
+
+    db.apply_retention_all(&policy)
+}
+
+/// Get the current retention policy derived from settings.
+#[tauri::command]
+pub fn get_retention_policy(
+    state: State<'_, OfflineDatabaseState>,
+) -> Result<RetentionPolicy, JournalError> {
+    let db = state
+        .0
+        .lock()
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
+
+    db.get_retention_policy()
 }
 
 // ============================================================================
