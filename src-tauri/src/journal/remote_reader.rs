@@ -1,5 +1,6 @@
 use crate::error::JournalError;
 use crate::journal::parser::{get_priority, get_timestamp, parse_entry};
+use crate::journal::shell_escape::escape_arg;
 use crate::journal::ssh::ConnectionManager;
 use crate::journal::types::{
     BootInfo, JournalFilter, JournalQueryResult, JournalStatistics, PriorityCount, ServiceCount,
@@ -20,13 +21,13 @@ impl RemoteJournalReader {
         args.push("json".to_string());
         args.push("--no-pager".to_string());
 
-        // Apply unit filters
+        // Apply unit filters (escape user input to prevent command injection)
         for unit in &filter.units {
             args.push("-u".to_string());
-            args.push(unit.clone());
+            args.push(escape_arg(unit));
         }
 
-        // Priority filter
+        // Priority filter (numeric values are safe)
         if !filter.priorities.is_empty() {
             let min = filter.priorities.iter().min().unwrap();
             let max = filter.priorities.iter().max().unwrap();
@@ -34,43 +35,44 @@ impl RemoteJournalReader {
             args.push(format!("{}..{}", min, max));
         }
 
-        // Cursor for pagination
+        // Cursor for pagination (escape user input)
         if let Some(cursor) = &filter.after_cursor {
             args.push("--after-cursor".to_string());
-            args.push(format!("'{}'", cursor));
+            args.push(escape_arg(cursor));
         } else {
-            // Time filters
+            // Time filters (escape user input)
             if let Some(since) = &filter.since {
                 args.push("-S".to_string());
-                args.push(format!("'{}'", since));
+                args.push(escape_arg(since));
             }
         }
 
         if let Some(until) = &filter.until {
             args.push("-U".to_string());
-            args.push(format!("'{}'", until));
+            args.push(escape_arg(until));
         }
 
-        // Boot filter
+        // Boot filter (escape user input)
         if let Some(boot_id) = &filter.boot_id {
             args.push("-b".to_string());
-            args.push(boot_id.clone());
+            args.push(escape_arg(boot_id));
         } else if let Some(offset) = filter.boot_offset {
+            // Numeric offset is safe
             args.push("-b".to_string());
             args.push(offset.to_string());
         }
 
-        // Identifier filter
+        // Identifier filter (escape user input)
         if let Some(identifier) = &filter.identifier {
             args.push("-t".to_string());
-            args.push(identifier.clone());
+            args.push(escape_arg(identifier));
         }
 
-        // Grep pattern
+        // Grep pattern (escape user input)
         if let Some(pattern) = &filter.grep_pattern {
             if !pattern.is_empty() {
                 args.push("-g".to_string());
-                args.push(format!("'{}'", pattern));
+                args.push(escape_arg(pattern));
                 if !filter.case_sensitive {
                     args.push("--case-sensitive=false".to_string());
                 }
@@ -82,7 +84,7 @@ impl RemoteJournalReader {
             args.push("-r".to_string());
         }
 
-        // Extra args
+        // Extra args (these are internal, not user-provided)
         for arg in extra_args {
             args.push(arg.to_string());
         }
@@ -186,10 +188,12 @@ impl RemoteJournalReader {
     fn build_filter_args(filter: &JournalFilter) -> String {
         let mut args = Vec::new();
 
+        // Escape all user-provided values to prevent command injection
         for unit in &filter.units {
-            args.push(format!("-u {}", unit));
+            args.push(format!("-u {}", escape_arg(unit)));
         }
 
+        // Priority is numeric, safe to use directly
         if !filter.priorities.is_empty() {
             let min = filter.priorities.iter().min().unwrap();
             let max = filter.priorities.iter().max().unwrap();
@@ -197,22 +201,23 @@ impl RemoteJournalReader {
         }
 
         if let Some(since) = &filter.since {
-            args.push(format!("-S '{}'", since));
+            args.push(format!("-S {}", escape_arg(since)));
         }
 
         if let Some(until) = &filter.until {
-            args.push(format!("-U '{}'", until));
+            args.push(format!("-U {}", escape_arg(until)));
         }
 
         if let Some(boot_id) = &filter.boot_id {
-            args.push(format!("-b {}", boot_id));
+            args.push(format!("-b {}", escape_arg(boot_id)));
         } else if let Some(offset) = filter.boot_offset {
+            // Numeric offset is safe
             args.push(format!("-b {}", offset));
         }
 
         if let Some(pattern) = &filter.grep_pattern {
             if !pattern.is_empty() {
-                args.push(format!("-g '{}'", pattern));
+                args.push(format!("-g {}", escape_arg(pattern)));
                 if !filter.case_sensitive {
                     args.push("--case-sensitive=false".to_string());
                 }

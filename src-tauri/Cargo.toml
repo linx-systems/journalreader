@@ -35,3 +35,5 @@ sha2 = "0.10"
 base64 = "0.22"
 # Secure password storage in system keyring
 keyring = "3"
+# Safe shell argument escaping for SSH commands
+shell-escape = "0.1"

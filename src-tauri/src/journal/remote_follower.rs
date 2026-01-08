@@ -1,6 +1,7 @@
 use crate::error::JournalError;
 use crate::journal::known_hosts::{HostKeyStatus, SharedKnownHostsStorage};
 use crate::journal::parser::parse_entry;
+use crate::journal::shell_escape::escape_arg;
 use crate::journal::types::{AuthMethod, JournalEntry, JournalFilter, RemoteHost};
 use regex::Regex;
 use ssh2::Session;
@@ -347,13 +348,13 @@ impl RemoteJournalFollower {
         args.push("-n".to_string());
         args.push("0".to_string());
 
-        // Apply unit filters
+        // Apply unit filters (escape user input to prevent command injection)
         for unit in &filter.units {
             args.push("-u".to_string());
-            args.push(unit.clone());
+            args.push(escape_arg(unit));
         }
 
-        // Priority filter
+        // Priority filter (numeric values are safe)
         if !filter.priorities.is_empty() {
             let min = filter.priorities.iter().min().unwrap();
             let max = filter.priorities.iter().max().unwrap();
@@ -361,26 +362,27 @@ impl RemoteJournalFollower {
             args.push(format!("{}..{}", min, max));
         }
 
-        // Boot filter
+        // Boot filter (escape user input)
         if let Some(boot_id) = &filter.boot_id {
             args.push("-b".to_string());
-            args.push(boot_id.clone());
+            args.push(escape_arg(boot_id));
         } else if let Some(offset) = filter.boot_offset {
+            // Numeric offset is safe
             args.push("-b".to_string());
             args.push(offset.to_string());
         }
 
-        // Identifier filter
+        // Identifier filter (escape user input)
         if let Some(identifier) = &filter.identifier {
             args.push("-t".to_string());
-            args.push(identifier.clone());
+            args.push(escape_arg(identifier));
         }
 
-        // Grep pattern
+        // Grep pattern (escape user input)
         if let Some(pattern) = &filter.grep_pattern {
             if !pattern.is_empty() {
                 args.push("-g".to_string());
-                args.push(format!("'{}'", pattern));
+                args.push(escape_arg(pattern));
                 if !filter.case_sensitive {
                     args.push("--case-sensitive=false".to_string());
                 }
