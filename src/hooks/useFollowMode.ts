@@ -24,8 +24,8 @@ let globalUnlistenError: UnlistenFn | null = null;
 let globalUnlistenStopped: UnlistenFn | null = null;
 
 // Global state for filter change handling (singleton - only one instance should handle restarts)
-let filterChangeHandlerRegistered = false;
 let lastFilterKey: string | null = null;
+let restartInProgress = false;
 
 async function setupListeners(
   prependEntries: (entries: any[]) => void,
@@ -190,41 +190,42 @@ export function useFollowMode() {
   const filterKey = useMemo(() => getFilterKey(filter), [filter]);
 
   useEffect(() => {
-    // Only one hook instance should handle filter changes (singleton pattern)
-    // The first instance to register becomes the handler
-    if (!filterChangeHandlerRegistered) {
-      filterChangeHandlerRegistered = true;
-      lastFilterKey = filterKey;
-    }
-
     // Check if filter actually changed (using global state for singleton behavior)
+    // Use a lock to prevent multiple simultaneous restarts from different hook instances
     if (lastFilterKey === filterKey) return;
+    if (restartInProgress) return;
 
-    // Update the global filter key
+    // Update the global filter key and acquire lock
     const previousKey = lastFilterKey;
     lastFilterKey = filterKey;
 
     // If following, restart with the new filter (only once, not per-instance)
     if (isFollowing && previousKey !== null) {
+      restartInProgress = true;
       console.log('[useFollowMode] Filter changed while following, restarting with:', filter);
       const restartFollow = async () => {
-        if (isRemoteRef.current) {
-          // Retrieve password from keyring for remote follow
-          const hostId = connectedHostIdRef.current;
-          let password: string | undefined;
-          if (hostId) {
-            const savedPassword = await getHostPassword(hostId);
-            password = savedPassword ?? undefined;
+        try {
+          if (isRemoteRef.current) {
+            // Retrieve password from keyring for remote follow
+            const hostId = connectedHostIdRef.current;
+            let password: string | undefined;
+            if (hostId) {
+              const savedPassword = await getHostPassword(hostId);
+              password = savedPassword ?? undefined;
+            }
+            console.log('[useFollowMode] Restarting remote follow with filter:', filter);
+            await startRemoteFollow(filter, password);
+          } else {
+            console.log('[useFollowMode] Restarting local follow with filter:', filter);
+            await startFollow(filter);
           }
-          console.log('[useFollowMode] Restarting remote follow with filter:', filter);
-          await startRemoteFollow(filter, password);
-        } else {
-          console.log('[useFollowMode] Restarting local follow with filter:', filter);
-          await startFollow(filter);
+        } finally {
+          restartInProgress = false;
         }
       };
 
       restartFollow().catch((err) => {
+        restartInProgress = false;
         const errorMessage = err instanceof Error ? err.message : String(err);
         setError(`Failed to update follow filter: ${errorMessage}`);
         setFollowing(false);
