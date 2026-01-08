@@ -6,7 +6,7 @@
 
 use crate::commands::remote::OfflineDatabaseState;
 use crate::error::JournalError;
-use crate::journal::{JournalFilter, JournalQueryResult, OfflineSettings, StorageStats, SyncState};
+use crate::journal::{JournalFilter, JournalQueryResult, OfflineSettings, StorageStats, SyncState, SyncStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
 
@@ -139,6 +139,9 @@ pub fn get_all_storage_stats(
 
 /// Delete all offline logs for a specific host.
 ///
+/// Also resets the sync state for this host so that the next sync
+/// will fetch all entries from the beginning.
+///
 /// Returns the number of entries deleted.
 #[tauri::command]
 pub fn delete_offline_logs(
@@ -151,6 +154,18 @@ pub fn delete_offline_logs(
         .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
 
     let deleted = db.delete_all_entries(&host_id)?;
+
+    // Reset sync state so next sync fetches all entries from beginning
+    let reset_state = SyncState {
+        host_id: host_id.clone(),
+        last_sync_timestamp: 0,
+        last_cursor: None,
+        sync_status: SyncStatus::Never,
+        sync_error: None,
+        entries_synced: 0,
+    };
+    db.update_sync_state(&reset_state)?;
+
     Ok(deleted as u64)
 }
 

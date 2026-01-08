@@ -178,8 +178,12 @@ impl SyncEngine {
             }
 
             // Build filter for this batch
+            // When no cursor exists (first sync), use since="@0" to get ALL entries
+            // from the beginning of the journal, not just recent ones.
+            // The "@0" is Unix epoch timestamp which journalctl interprets as "from the start".
             let filter = JournalFilter {
                 after_cursor: last_cursor.clone(),
+                since: if last_cursor.is_none() { Some("@0".to_string()) } else { None },
                 limit: SYNC_BATCH_SIZE,
                 reverse: false, // Oldest first for proper ordering
                 ..Default::default()
