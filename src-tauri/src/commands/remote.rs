@@ -1,9 +1,9 @@
 use crate::error::JournalError;
 use crate::journal::{
-    BootInfo, ConnectionState, ConnectionStatus, HostKeyInfo, JournalFilter, JournalQueryResult,
-    JournalStatistics, KnownHostsStorage, RemoteHost, RemoteHostInput, RemoteJournalFollower,
-    RemoteJournalReader, SharedConnectionManager, SharedHostStorage, SharedKnownHostsStorage,
-    StatisticsRequest, StoredHostKey, SystemUnit, TestConnectionResult,
+    keyring, BootInfo, ConnectionState, ConnectionStatus, HostKeyInfo, JournalFilter,
+    JournalQueryResult, JournalStatistics, KnownHostsStorage, RemoteHost, RemoteHostInput,
+    RemoteJournalFollower, RemoteJournalReader, SharedConnectionManager, SharedHostStorage,
+    SharedKnownHostsStorage, StatisticsRequest, StoredHostKey, SystemUnit, TestConnectionResult,
 };
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
@@ -529,4 +529,43 @@ pub fn is_remote_following(
         .lock()
         .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
     Ok(follower.is_running())
+}
+
+// ============================================================================
+// Keyring (Secure Password Storage) Commands
+// ============================================================================
+
+/// Check if the system keyring is available for secure password storage.
+///
+/// Returns true if passwords can be stored securely in the system keyring
+/// (e.g., GNOME Keyring, KWallet, macOS Keychain, Windows Credential Manager).
+/// Returns false on headless systems or when no keyring service is available.
+#[tauri::command]
+pub fn is_keyring_available() -> bool {
+    keyring::is_keyring_available()
+}
+
+/// Save a password for a host in the system keyring.
+///
+/// The password is stored securely using the operating system's native
+/// credential storage mechanism.
+#[tauri::command]
+pub fn save_host_password(host_id: String, password: String) -> Result<(), JournalError> {
+    keyring::save_password(&host_id, &password)
+}
+
+/// Retrieve a saved password for a host from the system keyring.
+///
+/// Returns None if no password is stored for this host.
+#[tauri::command]
+pub fn get_host_password(host_id: String) -> Result<Option<String>, JournalError> {
+    keyring::get_password(&host_id)
+}
+
+/// Delete a saved password for a host from the system keyring.
+///
+/// Returns true if a password was deleted, false if no password was stored.
+#[tauri::command]
+pub fn delete_host_password(host_id: String) -> Result<bool, JournalError> {
+    keyring::delete_password(&host_id)
 }

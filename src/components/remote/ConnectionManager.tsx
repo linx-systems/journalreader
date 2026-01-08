@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
   Plus,
@@ -13,7 +13,14 @@ import {
   Shield,
 } from 'lucide-react';
 import { useConnectionStore } from '../../stores/connectionStore';
-import { testHostConnection, connectToHostAcceptKey } from '../../lib/tauri';
+import {
+  testHostConnection,
+  connectToHostAcceptKey,
+  isKeyringAvailable,
+  getHostPassword,
+  saveHostPassword,
+  deleteHostPassword,
+} from '../../lib/tauri';
 import type { RemoteHost, RemoteHostInput, AuthMethod } from '../../lib/types';
 import { HostKeyVerificationDialog } from './HostKeyVerificationDialog';
 import clsx from 'clsx';
@@ -51,7 +58,18 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     hostId: string;
     action: 'connect' | 'test';
   } | null>(null);
-  const [password, setPassword] = useState('');
+  // Use ref for password to avoid persisting in React state/DevTools
+  const passwordRef = useRef<string>('');
+  const passwordInputRef = useRef<HTMLInputElement>(null);
+
+  // Helper to securely clear password from memory
+  const clearPassword = useCallback(() => {
+    passwordRef.current = '';
+    if (passwordInputRef.current) {
+      passwordInputRef.current.value = '';
+    }
+  }, []);
+
   const [hostKeyVerification, setHostKeyVerification] = useState<{
     host: RemoteHost;
     errorMessage: string;
@@ -64,9 +82,49 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     }
   }, [isOpen, loadHosts]);
 
+  // Clear password on component unmount for security
+  useEffect(() => {
+    return () => {
+      clearPassword();
+    };
+  }, [clearPassword]);
+
   const handleConnect = async (host: RemoteHost, pwd?: string) => {
     // Check if password is needed
     if (host.authMethod === 'password' && !pwd) {
+      // Try to get saved password from keyring first
+      if (host.savePassword) {
+        try {
+          const savedPassword = await getHostPassword(host.id);
+          if (savedPassword) {
+            // Use saved password
+            setIsConnecting(host.id);
+            try {
+              await connect(host.id, savedPassword);
+              return;
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              if (errorMessage.includes('Host key verification required') ||
+                  errorMessage.includes('HOST KEY HAS CHANGED')) {
+                setHostKeyVerification({ host, errorMessage, password: savedPassword });
+                return;
+              }
+              // If auth failed, prompt for password (saved password might be outdated)
+              if (errorMessage.includes('auth') || errorMessage.includes('Authentication')) {
+                // Delete outdated password
+                await deleteHostPassword(host.id).catch(() => {});
+              } else {
+                // Other errors are shown through connection store
+                return;
+              }
+            } finally {
+              setIsConnecting(null);
+            }
+          }
+        } catch {
+          // Keyring error, fall through to password prompt
+        }
+      }
       setPasswordPrompt({ hostId: host.id, action: 'connect' });
       return;
     }
@@ -92,16 +150,26 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
 
     const hostId = passwordPrompt.hostId;
     const action = passwordPrompt.action;
-    const pwd = password;
+    const pwd = passwordRef.current;
     const host = hosts.find((h) => h.id === hostId);
 
-    setIsConnecting(hostId);
+    // Clear password immediately after capturing the value
     setPasswordPrompt(null);
-    setPassword('');
+    clearPassword();
+
+    setIsConnecting(hostId);
 
     try {
       if (action === 'connect') {
         await connect(hostId, pwd);
+        // Save password to keyring if enabled and connection succeeded
+        if (host?.savePassword && pwd) {
+          try {
+            await saveHostPassword(hostId, pwd);
+          } catch {
+            // Silently fail - password save is optional
+          }
+        }
       } else {
         setIsTesting(hostId);
         const result = await testHostConnection(hostId, pwd);
@@ -160,6 +228,14 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
 
   const handleDelete = async (host: RemoteHost) => {
     if (!confirm(`Delete host "${host.name}"?`)) return;
+    // Delete saved password from keyring if any
+    if (host.savePassword) {
+      try {
+        await deleteHostPassword(host.id);
+      } catch {
+        // Silently fail - host deletion should still proceed
+      }
+    }
     await deleteHost(host.id);
   };
 
@@ -199,6 +275,14 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
         host={editingHost}
         onSave={async (input) => {
           if (editingHost) {
+            // If savePassword was disabled, delete the saved password
+            if (editingHost.savePassword && !input.savePassword) {
+              try {
+                await deleteHostPassword(editingHost.id);
+              } catch {
+                // Silently fail
+              }
+            }
             await updateHost(editingHost.id, input);
           } else {
             await addHost(input);
@@ -229,8 +313,8 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
           </p>
           <input
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            ref={passwordInputRef}
+            onChange={(e) => { passwordRef.current = e.target.value; }}
             placeholder={host?.authMethod === 'password' ? 'Password' : 'Key passphrase (optional)'}
             className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme mb-4"
             autoFocus
@@ -244,7 +328,7 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
             <button
               onClick={() => {
                 setPasswordPrompt(null);
-                setPassword('');
+                clearPassword();
               }}
               className="px-4 py-2 text-sm text-theme-secondary hover:text-theme"
             >
@@ -484,8 +568,22 @@ function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
   const [authMethod, setAuthMethod] = useState<AuthMethod>(host?.authMethod ?? 'agent');
   const [keyPath, setKeyPath] = useState(host?.keyPath ?? '~/.ssh/id_rsa');
   const [sudoRequired, setSudoRequired] = useState(host?.sudoRequired ?? false);
+  const [savePassword, setSavePassword] = useState(host?.savePassword ?? false);
+  const [keyringAvailable, setKeyringAvailable] = useState<boolean | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Check keyring availability on mount
+  useEffect(() => {
+    isKeyringAvailable().then(setKeyringAvailable).catch(() => setKeyringAvailable(false));
+  }, []);
+
+  // Reset savePassword when switching away from password auth
+  useEffect(() => {
+    if (authMethod !== 'password') {
+      setSavePassword(false);
+    }
+  }, [authMethod]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -506,6 +604,7 @@ function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
         authMethod,
         keyPath: authMethod === 'key' ? keyPath : undefined,
         sudoRequired,
+        savePassword: authMethod === 'password' ? savePassword : false,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -630,6 +729,43 @@ function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
               Require sudo for journalctl
             </label>
           </div>
+
+          {/* Save Password option - only for password auth */}
+          {authMethod === 'password' && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="savePassword"
+                  checked={savePassword}
+                  onChange={(e) => setSavePassword(e.target.checked)}
+                  disabled={keyringAvailable === false}
+                  className="rounded disabled:opacity-50"
+                />
+                <label
+                  htmlFor="savePassword"
+                  className={clsx(
+                    'text-sm',
+                    keyringAvailable === false ? 'text-theme-secondary' : 'text-theme'
+                  )}
+                >
+                  Save password in system keyring
+                </label>
+              </div>
+              {keyringAvailable === false && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 ml-6">
+                  System keyring not available. Passwords cannot be saved securely.
+                  This may happen on headless servers or systems without a keyring service
+                  (e.g., GNOME Keyring, KWallet, macOS Keychain).
+                </p>
+              )}
+              {keyringAvailable === true && savePassword && (
+                <p className="text-xs text-theme-secondary ml-6">
+                  Password will be stored securely in your system's credential manager.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-4">
             <button

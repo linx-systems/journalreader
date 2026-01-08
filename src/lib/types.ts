@@ -208,6 +208,8 @@ export interface RemoteHost {
   authMethod: AuthMethod;
   keyPath?: string;
   sudoRequired: boolean;
+  /** Whether to save password in system keyring (only for password auth) */
+  savePassword: boolean;
 }
 
 export interface RemoteHostInput {
@@ -218,6 +220,8 @@ export interface RemoteHostInput {
   authMethod: AuthMethod;
   keyPath?: string;
   sudoRequired: boolean;
+  /** Whether to save password in system keyring (only for password auth) */
+  savePassword: boolean;
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';

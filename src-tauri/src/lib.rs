@@ -8,12 +8,13 @@ use commands::journal::{
 };
 use commands::remote::{
     accept_host_key, add_remote_host, connect_to_host, connect_to_host_accept_key,
-    delete_remote_host, disconnect_from_host, fetch_host_key, get_connection_state,
-    get_host_key_info, get_remote_host, get_remote_log_count, get_remote_statistics,
-    is_remote_following, list_remote_boots, list_remote_hosts, list_remote_units,
-    query_remote_journal, remove_host_key, start_remote_follow, stop_remote_follow,
-    test_current_connection, test_host_connection, update_remote_host, ConnectionManagerState,
-    HostStorageState, KnownHostsStorageState, RemoteFollowerState,
+    delete_host_password, delete_remote_host, disconnect_from_host, fetch_host_key,
+    get_connection_state, get_host_key_info, get_host_password, get_remote_host,
+    get_remote_log_count, get_remote_statistics, is_keyring_available, is_remote_following,
+    list_remote_boots, list_remote_hosts, list_remote_units, query_remote_journal, remove_host_key,
+    save_host_password, start_remote_follow, stop_remote_follow, test_current_connection,
+    test_host_connection, update_remote_host, ConnectionManagerState, HostStorageState,
+    KnownHostsStorageState, RemoteFollowerState,
 };
 use journal::{
     check_file_permissions, get_app_config_dir, new_shared_connection_manager,
@@ -92,7 +93,12 @@ pub fn run() {
             get_remote_statistics,
             start_remote_follow,
             stop_remote_follow,
-            is_remote_following
+            is_remote_following,
+            // Keyring commands (secure password storage)
+            is_keyring_available,
+            save_host_password,
+            get_host_password,
+            delete_host_password
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

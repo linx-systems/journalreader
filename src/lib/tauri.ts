@@ -169,3 +169,38 @@ export async function stopRemoteFollow(): Promise<void> {
 export async function isRemoteFollowing(): Promise<boolean> {
   return invoke<boolean>('is_remote_following');
 }
+
+// ============================================================================
+// Keyring (Secure Password Storage) Commands
+// ============================================================================
+
+/**
+ * Check if the system keyring is available for secure password storage.
+ * Returns false on headless systems or when no keyring service is available.
+ */
+export async function isKeyringAvailable(): Promise<boolean> {
+  return invoke<boolean>('is_keyring_available');
+}
+
+/**
+ * Save a password for a host in the system keyring.
+ */
+export async function saveHostPassword(hostId: string, password: string): Promise<void> {
+  return invoke<void>('save_host_password', { hostId, password });
+}
+
+/**
+ * Retrieve a saved password for a host from the system keyring.
+ * Returns null if no password is stored for this host.
+ */
+export async function getHostPassword(hostId: string): Promise<string | null> {
+  return invoke<string | null>('get_host_password', { hostId });
+}
+
+/**
+ * Delete a saved password for a host from the system keyring.
+ * Returns true if a password was deleted, false if no password was stored.
+ */
+export async function deleteHostPassword(hostId: string): Promise<boolean> {
+  return invoke<boolean>('delete_host_password', { hostId });
+}

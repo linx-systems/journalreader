@@ -99,6 +99,8 @@ export const useConnectionStore = create<ConnectionStore>()(
             connectedHostId: hostId,
             connectionStatus: 'connected',
             connectionError: null,
+            // Clear password immediately after successful connection
+            sessionPassword: null,
           });
         } catch (error) {
           set({

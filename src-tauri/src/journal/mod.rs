@@ -1,5 +1,6 @@
 pub mod follower;
 pub mod hosts;
+pub mod keyring;
 pub mod known_hosts;
 pub(crate) mod parser;
 pub mod reader;

@@ -33,3 +33,5 @@ ctrlc = "3"
 # Host key fingerprint calculation
 sha2 = "0.10"
 base64 = "0.22"
+# Secure password storage in system keyring
+keyring = "3"

@@ -44,6 +44,9 @@ pub enum JournalError {
 
     #[error("Host key changed - potential MITM attack: {0}")]
     HostKeyChanged(String),
+
+    #[error("Keyring error: {0}")]
+    KeyringError(String),
 }
 
 impl serde::Serialize for JournalError {

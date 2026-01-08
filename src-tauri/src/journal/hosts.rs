@@ -161,6 +161,7 @@ impl HostStorage {
             auth_method: input.auth_method,
             key_path: input.key_path,
             sudo_required: input.sudo_required,
+            save_password: input.save_password,
         };
 
         self.hosts.push(host.clone());
@@ -184,6 +185,7 @@ impl HostStorage {
         host.auth_method = input.auth_method;
         host.key_path = input.key_path;
         host.sudo_required = input.sudo_required;
+        host.save_password = input.save_password;
 
         let updated = host.clone();
         self.save()?;

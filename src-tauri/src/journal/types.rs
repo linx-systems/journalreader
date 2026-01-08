@@ -31,6 +31,9 @@ pub struct RemoteHost {
     pub key_path: Option<String>,
     #[serde(default)]
     pub sudo_required: bool,
+    /// Whether to save password in system keyring (only for password auth)
+    #[serde(default)]
+    pub save_password: bool,
 }
 
 fn default_port() -> u16 {
@@ -50,6 +53,7 @@ impl RemoteHost {
             auth_method: AuthMethod::Agent,
             key_path: None,
             sudo_required: false,
+            save_password: false,
         }
     }
 }
@@ -109,6 +113,9 @@ pub struct RemoteHostInput {
     pub key_path: Option<String>,
     #[serde(default)]
     pub sudo_required: bool,
+    /// Whether to save password in system keyring (only for password auth)
+    #[serde(default)]
+    pub save_password: bool,
 }
 
 /// Connection status for a remote host
