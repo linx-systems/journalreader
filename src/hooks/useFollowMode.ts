@@ -96,8 +96,10 @@ export function useFollowMode() {
   // Use refs to track state in callbacks without re-creating them
   const isRemoteRef = useRef(isRemote);
   const connectedHostIdRef = useRef(connectedHostId);
+  const filterRef = useRef(filter);
   isRemoteRef.current = isRemote;
   connectedHostIdRef.current = connectedHostId;
+  filterRef.current = filter;
 
   // Start follow mode
   const start = useCallback(async () => {
@@ -215,7 +217,9 @@ export function useFollowMode() {
         }
 
         restartInProgress = true;
-        console.log('[useFollowMode] Filter changed while following, restarting with:', filter);
+        // Use filterRef.current to get the LATEST filter value, not the stale closure value
+        const currentFilter = filterRef.current;
+        console.log('[useFollowMode] Filter changed while following, restarting with:', currentFilter);
 
         const restartFollow = async () => {
           try {
@@ -237,11 +241,11 @@ export function useFollowMode() {
                 const savedPassword = await getHostPassword(hostId);
                 password = savedPassword ?? undefined;
               }
-              console.log('[useFollowMode] Restarting remote follow with filter:', filter);
-              await startRemoteFollow(filter, password);
+              console.log('[useFollowMode] Restarting remote follow with filter:', currentFilter);
+              await startRemoteFollow(currentFilter, password);
             } else {
-              console.log('[useFollowMode] Restarting local follow with filter:', filter);
-              await startFollow(filter);
+              console.log('[useFollowMode] Restarting local follow with filter:', currentFilter);
+              await startFollow(currentFilter);
             }
           } finally {
             restartInProgress = false;
