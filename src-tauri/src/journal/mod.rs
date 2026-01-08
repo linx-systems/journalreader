@@ -11,6 +11,7 @@ pub mod remote_follower;
 pub mod remote_reader;
 pub(crate) mod shell_escape;
 pub mod ssh;
+pub mod sync_engine;
 pub mod types;
 
 pub use follower::JournalFollower;
@@ -28,3 +29,4 @@ pub use ssh::{new_shared_connection_manager, SharedConnectionManager};
 pub use types::*;
 pub use offline_db::{new_shared_offline_database, OfflineDatabase, SharedOfflineDatabase};
 pub use offline_types::{OfflineSettings, StorageStats, SyncState, SyncStatus};
+pub use sync_engine::{SyncEngine, SyncProgressEvent, SyncProgressStatus, SyncResult};
