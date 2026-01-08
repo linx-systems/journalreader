@@ -6,6 +6,7 @@ import { Toolbar } from './components/toolbar/Toolbar';
 import { SettingsPanel } from './components/settings/SettingsPanel';
 import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { OfflineBanner } from './components/offline/OfflineBanner';
 import { useBookmarkShortcuts } from './hooks/useBookmarkShortcuts';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useBookmarkStore } from './stores/bookmarkStore';
@@ -71,6 +72,9 @@ function App() {
 
   return (
     <div className="h-screen flex flex-col bg-theme-secondary">
+      {/* Offline Banner */}
+      <OfflineBanner />
+
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 bg-theme border-b border-theme">
         <div className="flex items-center gap-3">
