@@ -39,13 +39,31 @@ export const useFilterStore = create<FilterState>((set) => ({
   isFollowPaused: false,
 
   setFilter: (newFilter) =>
-    set((state) => ({
-      filter: { ...state.filter, ...newFilter },
-      // Reset pagination when filter changes (but keep entries in follow mode)
-      entries: state.isFollowing ? state.entries : [],
-      cursorEnd: state.isFollowing ? state.cursorEnd : null,
-      hasMore: state.isFollowing ? state.hasMore : false,
-    })),
+    set((state) => {
+      const updatedFilter = { ...state.filter, ...newFilter };
+
+      // When in follow mode and priorities change, filter out entries that don't match
+      let filteredEntries = state.entries;
+      if (state.isFollowing && newFilter.priorities !== undefined) {
+        const validPriorities = new Set(newFilter.priorities);
+        // If priorities array is empty or undefined, keep all entries
+        if (newFilter.priorities.length > 0) {
+          filteredEntries = state.entries.filter(entry =>
+            validPriorities.has(entry.priority)
+          );
+        }
+      } else if (!state.isFollowing) {
+        // Not in follow mode - clear entries as before
+        filteredEntries = [];
+      }
+
+      return {
+        filter: updatedFilter,
+        entries: filteredEntries,
+        cursorEnd: state.isFollowing ? state.cursorEnd : null,
+        hasMore: state.isFollowing ? state.hasMore : false,
+      };
+    }),
 
   resetFilter: () =>
     set({
