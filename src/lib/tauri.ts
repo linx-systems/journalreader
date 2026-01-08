@@ -159,6 +159,8 @@ export async function startRemoteFollow(
   filter: JournalFilter,
   password?: string
 ): Promise<void> {
+  console.log('[tauri] startRemoteFollow called with filter:', JSON.stringify(filter, null, 2));
+  console.log('[tauri] filter.priorities:', filter.priorities);
   return invoke<void>('start_remote_follow', { filter, password });
 }
 

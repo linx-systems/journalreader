@@ -39,13 +39,31 @@ export const useFilterStore = create<FilterState>((set) => ({
   isFollowPaused: false,
 
   setFilter: (newFilter) =>
-    set((state) => ({
-      filter: { ...state.filter, ...newFilter },
-      // Reset pagination when filter changes (but keep entries in follow mode)
-      entries: state.isFollowing ? state.entries : [],
-      cursorEnd: state.isFollowing ? state.cursorEnd : null,
-      hasMore: state.isFollowing ? state.hasMore : false,
-    })),
+    set((state) => {
+      const updatedFilter = { ...state.filter, ...newFilter };
+
+      // When in follow mode and priorities change, filter out entries that don't match
+      let filteredEntries = state.entries;
+      if (state.isFollowing && newFilter.priorities !== undefined) {
+        const validPriorities = new Set(newFilter.priorities);
+        // If priorities array is empty or undefined, keep all entries
+        if (newFilter.priorities.length > 0) {
+          filteredEntries = state.entries.filter(entry =>
+            validPriorities.has(entry.priority)
+          );
+        }
+      } else if (!state.isFollowing) {
+        // Not in follow mode - clear entries as before
+        filteredEntries = [];
+      }
+
+      return {
+        filter: updatedFilter,
+        entries: filteredEntries,
+        cursorEnd: state.isFollowing ? state.cursorEnd : null,
+        hasMore: state.isFollowing ? state.hasMore : false,
+      };
+    }),
 
   resetFilter: () =>
     set({
@@ -64,10 +82,31 @@ export const useFilterStore = create<FilterState>((set) => ({
     })),
 
   // Add new entries at the beginning (for follow mode with newest-first display)
+  // Deduplicate by cursor and filter by current priority settings
   prependEntries: (newEntries) =>
-    set((state) => ({
-      entries: [...newEntries, ...state.entries],
-    })),
+    set((state) => {
+      // Create a Set of existing cursors for O(1) lookup
+      const existingCursors = new Set(state.entries.map(e => e.cursor));
+
+      // Get valid priorities from current filter (if set)
+      const validPriorities = state.filter.priorities?.length
+        ? new Set(state.filter.priorities)
+        : null;
+
+      // Filter out entries that already exist OR don't match priority filter
+      const uniqueNewEntries = newEntries.filter(e => {
+        // Skip if already exists
+        if (existingCursors.has(e.cursor)) return false;
+        // Skip if doesn't match priority filter (when filter is active)
+        if (validPriorities && !validPriorities.has(e.priority)) return false;
+        return true;
+      });
+
+      if (uniqueNewEntries.length === 0) return state;
+      return {
+        entries: [...uniqueNewEntries, ...state.entries],
+      };
+    }),
 
   setLoading: (isLoading) => set({ isLoading }),
 

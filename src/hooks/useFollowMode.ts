@@ -7,6 +7,7 @@ import {
   stopFollow,
   startRemoteFollow,
   stopRemoteFollow,
+  getHostPassword,
 } from '../lib/tauri';
 import { logError } from '../lib/errorLogger';
 import type { FollowEvent, FollowErrorEvent } from '../lib/types';
@@ -21,6 +22,12 @@ let listenersSetUp = false;
 let globalUnlistenEntry: UnlistenFn | null = null;
 let globalUnlistenError: UnlistenFn | null = null;
 let globalUnlistenStopped: UnlistenFn | null = null;
+
+// Global state for filter change handling (singleton - only one instance should handle restarts)
+let lastFilterKey: string | null = null;
+let restartInProgress = false;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const DEBOUNCE_MS = 300; // Debounce filter changes by 300ms
 
 async function setupListeners(
   prependEntries: (entries: any[]) => void,
@@ -83,26 +90,38 @@ export function useFollowMode() {
     setError,
   } = useFilterStore();
 
-  const { connectedHostId, connectionStatus, sessionPassword } = useConnectionStore();
+  const { connectedHostId, connectionStatus } = useConnectionStore();
   const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
 
   // Use refs to track state in callbacks without re-creating them
   const isRemoteRef = useRef(isRemote);
-  const sessionPasswordRef = useRef(sessionPassword);
+  const connectedHostIdRef = useRef(connectedHostId);
+  const filterRef = useRef(filter);
   isRemoteRef.current = isRemote;
-  sessionPasswordRef.current = sessionPassword;
-
-  const isFirstMount = useRef(true);
+  connectedHostIdRef.current = connectedHostId;
+  filterRef.current = filter;
 
   // Start follow mode
   const start = useCallback(async () => {
+    console.log('[useFollowMode] start() called with filter:', filter);
+    console.log('[useFollowMode] isRemote:', isRemoteRef.current);
     try {
       // Set up listeners if not already done
       await setupListeners(prependEntries, setError, setFollowing);
 
       // Start the follow process in Rust (remote or local)
       if (isRemoteRef.current) {
-        await startRemoteFollow(filter, sessionPasswordRef.current ?? undefined);
+        // For remote connections, retrieve password from keyring if available
+        // The session password is cleared after initial connection, so we need
+        // to get it from the keyring for the follow mode's separate SSH connection
+        const hostId = connectedHostIdRef.current;
+        let password: string | undefined;
+        if (hostId) {
+          const savedPassword = await getHostPassword(hostId);
+          password = savedPassword ?? undefined;
+        }
+        console.log('[useFollowMode] Calling startRemoteFollow with filter:', filter);
+        await startRemoteFollow(filter, password);
       } else {
         await startFollow(filter);
       }
@@ -173,32 +192,81 @@ export function useFollowMode() {
   // Restart follow mode when filter changes (to apply new filters)
   // Use JSON stringification to detect actual filter changes (not reference changes)
   const filterKey = useMemo(() => getFilterKey(filter), [filter]);
-  const filterKeyRef = useRef(filterKey);
 
   useEffect(() => {
-    // Skip the initial render
-    if (isFirstMount.current) {
-      isFirstMount.current = false;
-      filterKeyRef.current = filterKey;
-      return;
+    // Check if filter actually changed (using global state for singleton behavior)
+    if (lastFilterKey === filterKey) return;
+
+    // Update the global filter key immediately to prevent duplicate handling
+    const previousKey = lastFilterKey;
+    lastFilterKey = filterKey;
+
+    // If following, debounce and restart with the new filter
+    if (isFollowing && previousKey !== null) {
+      // Clear any pending debounce timer
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+
+      // Debounce the restart to avoid rapid-fire restarts while sliding
+      debounceTimer = setTimeout(() => {
+        // Check if a restart is already in progress
+        if (restartInProgress) {
+          console.log('[useFollowMode] Restart already in progress, skipping');
+          return;
+        }
+
+        restartInProgress = true;
+        // Use filterRef.current to get the LATEST filter value, not the stale closure value
+        const currentFilter = filterRef.current;
+        console.log('[useFollowMode] Filter changed while following, restarting with:', currentFilter);
+
+        const restartFollow = async () => {
+          try {
+            // First stop the current follow to ensure clean state
+            if (isRemoteRef.current) {
+              await stopRemoteFollow().catch(() => {});
+            } else {
+              await stopFollow().catch(() => {});
+            }
+
+            // Small delay to ensure the old connection is fully stopped
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            if (isRemoteRef.current) {
+              // Retrieve password from keyring for remote follow
+              const hostId = connectedHostIdRef.current;
+              let password: string | undefined;
+              if (hostId) {
+                const savedPassword = await getHostPassword(hostId);
+                password = savedPassword ?? undefined;
+              }
+              console.log('[useFollowMode] Restarting remote follow with filter:', currentFilter);
+              await startRemoteFollow(currentFilter, password);
+            } else {
+              console.log('[useFollowMode] Restarting local follow with filter:', currentFilter);
+              await startFollow(currentFilter);
+            }
+          } finally {
+            restartInProgress = false;
+          }
+        };
+
+        restartFollow().catch((err) => {
+          restartInProgress = false;
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          setError(`Failed to update follow filter: ${errorMessage}`);
+          setFollowing(false);
+        });
+      }, DEBOUNCE_MS);
     }
 
-    // Check if filter actually changed (deep comparison via JSON key)
-    if (filterKeyRef.current === filterKey) return;
-    filterKeyRef.current = filterKey;
-
-    // If following, restart with the new filter
-    if (isFollowing) {
-      const startFn = isRemoteRef.current
-        ? () => startRemoteFollow(filter, sessionPasswordRef.current ?? undefined)
-        : () => startFollow(filter);
-
-      startFn().catch((err) => {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setError(`Failed to update follow filter: ${errorMessage}`);
-        setFollowing(false);
-      });
-    }
+    // Cleanup debounce timer on unmount or filter change
+    return () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+    };
   }, [filter, filterKey, isFollowing, setError, setFollowing]);
 
   return {
