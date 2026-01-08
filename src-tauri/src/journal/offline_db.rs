@@ -19,7 +19,7 @@ fn get_database_path() -> Result<PathBuf, JournalError> {
 
 /// SQLite database for offline journal log storage
 pub struct OfflineDatabase {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl OfflineDatabase {
@@ -36,8 +36,14 @@ impl OfflineDatabase {
         Ok(db)
     }
 
+    /// Create from an existing connection (primarily for testing)
+    #[cfg(test)]
+    pub(crate) fn from_connection(conn: Connection) -> Self {
+        Self { conn }
+    }
+
     /// Run database migrations to create or update schema
-    fn run_migrations(&self) -> Result<(), JournalError> {
+    pub(crate) fn run_migrations(&self) -> Result<(), JournalError> {
         let current_version = self.get_schema_version()?;
 
         if current_version < 1 {
