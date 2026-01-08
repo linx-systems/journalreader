@@ -7,6 +7,7 @@ import { SettingsPanel } from './components/settings/SettingsPanel';
 import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OfflineBanner } from './components/offline/OfflineBanner';
+import { SyncProgress } from './components/offline/SyncProgress';
 import { useBookmarkShortcuts } from './hooks/useBookmarkShortcuts';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useBookmarkStore } from './stores/bookmarkStore';
@@ -150,6 +151,9 @@ function App() {
 
       {/* Keyboard Shortcuts Help */}
       <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+
+      {/* Sync Progress Floating UI */}
+      <SyncProgress />
     </div>
   );
 }
