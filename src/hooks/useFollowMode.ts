@@ -26,6 +26,8 @@ let globalUnlistenStopped: UnlistenFn | null = null;
 // Global state for filter change handling (singleton - only one instance should handle restarts)
 let lastFilterKey: string | null = null;
 let restartInProgress = false;
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+const DEBOUNCE_MS = 300; // Debounce filter changes by 300ms
 
 async function setupListeners(
   prependEntries: (entries: any[]) => void,
@@ -191,46 +193,76 @@ export function useFollowMode() {
 
   useEffect(() => {
     // Check if filter actually changed (using global state for singleton behavior)
-    // Use a lock to prevent multiple simultaneous restarts from different hook instances
     if (lastFilterKey === filterKey) return;
-    if (restartInProgress) return;
 
-    // Update the global filter key and acquire lock
+    // Update the global filter key immediately to prevent duplicate handling
     const previousKey = lastFilterKey;
     lastFilterKey = filterKey;
 
-    // If following, restart with the new filter (only once, not per-instance)
+    // If following, debounce and restart with the new filter
     if (isFollowing && previousKey !== null) {
-      restartInProgress = true;
-      console.log('[useFollowMode] Filter changed while following, restarting with:', filter);
-      const restartFollow = async () => {
-        try {
-          if (isRemoteRef.current) {
-            // Retrieve password from keyring for remote follow
-            const hostId = connectedHostIdRef.current;
-            let password: string | undefined;
-            if (hostId) {
-              const savedPassword = await getHostPassword(hostId);
-              password = savedPassword ?? undefined;
-            }
-            console.log('[useFollowMode] Restarting remote follow with filter:', filter);
-            await startRemoteFollow(filter, password);
-          } else {
-            console.log('[useFollowMode] Restarting local follow with filter:', filter);
-            await startFollow(filter);
-          }
-        } finally {
-          restartInProgress = false;
-        }
-      };
+      // Clear any pending debounce timer
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
 
-      restartFollow().catch((err) => {
-        restartInProgress = false;
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setError(`Failed to update follow filter: ${errorMessage}`);
-        setFollowing(false);
-      });
+      // Debounce the restart to avoid rapid-fire restarts while sliding
+      debounceTimer = setTimeout(() => {
+        // Check if a restart is already in progress
+        if (restartInProgress) {
+          console.log('[useFollowMode] Restart already in progress, skipping');
+          return;
+        }
+
+        restartInProgress = true;
+        console.log('[useFollowMode] Filter changed while following, restarting with:', filter);
+
+        const restartFollow = async () => {
+          try {
+            // First stop the current follow to ensure clean state
+            if (isRemoteRef.current) {
+              await stopRemoteFollow().catch(() => {});
+            } else {
+              await stopFollow().catch(() => {});
+            }
+
+            // Small delay to ensure the old connection is fully stopped
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            if (isRemoteRef.current) {
+              // Retrieve password from keyring for remote follow
+              const hostId = connectedHostIdRef.current;
+              let password: string | undefined;
+              if (hostId) {
+                const savedPassword = await getHostPassword(hostId);
+                password = savedPassword ?? undefined;
+              }
+              console.log('[useFollowMode] Restarting remote follow with filter:', filter);
+              await startRemoteFollow(filter, password);
+            } else {
+              console.log('[useFollowMode] Restarting local follow with filter:', filter);
+              await startFollow(filter);
+            }
+          } finally {
+            restartInProgress = false;
+          }
+        };
+
+        restartFollow().catch((err) => {
+          restartInProgress = false;
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          setError(`Failed to update follow filter: ${errorMessage}`);
+          setFollowing(false);
+        });
+      }, DEBOUNCE_MS);
     }
+
+    // Cleanup debounce timer on unmount or filter change
+    return () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+      }
+    };
   }, [filter, filterKey, isFollowing, setError, setFollowing]);
 
   return {
