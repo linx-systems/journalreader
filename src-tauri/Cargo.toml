@@ -37,3 +37,8 @@ base64 = "0.22"
 keyring = "3"
 # Safe shell argument escaping for SSH commands
 shell-escape = "0.1"
+# SQLite database for offline log storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -3,7 +3,8 @@ use crate::journal::{
     keyring, BootInfo, ConnectionState, ConnectionStatus, HostKeyInfo, JournalFilter,
     JournalQueryResult, JournalStatistics, KnownHostsStorage, RemoteHost, RemoteHostInput,
     RemoteJournalFollower, RemoteJournalReader, SharedConnectionManager, SharedHostStorage,
-    SharedKnownHostsStorage, StatisticsRequest, StoredHostKey, SystemUnit, TestConnectionResult,
+    SharedKnownHostsStorage, SharedOfflineDatabase, StatisticsRequest, StoredHostKey, SystemUnit,
+    TestConnectionResult,
 };
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
@@ -19,6 +20,9 @@ pub struct RemoteFollowerState(pub Mutex<RemoteJournalFollower>);
 
 /// Global state for known SSH hosts
 pub struct KnownHostsStorageState(pub SharedKnownHostsStorage);
+
+/// Global state for the offline database
+pub struct OfflineDatabaseState(pub SharedOfflineDatabase);
 
 // ============================================================================
 // Host Management Commands

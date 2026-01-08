@@ -14,12 +14,12 @@ use commands::remote::{
     list_remote_boots, list_remote_hosts, list_remote_units, query_remote_journal, remove_host_key,
     save_host_password, start_remote_follow, stop_remote_follow, test_current_connection,
     test_host_connection, update_remote_host, ConnectionManagerState, HostStorageState,
-    KnownHostsStorageState, RemoteFollowerState,
+    KnownHostsStorageState, OfflineDatabaseState, RemoteFollowerState,
 };
 use journal::{
     check_file_permissions, get_app_config_dir, new_shared_connection_manager,
-    new_shared_host_storage, new_shared_known_hosts_storage, JournalFollower,
-    RemoteJournalFollower,
+    new_shared_host_storage, new_shared_known_hosts_storage, new_shared_offline_database,
+    JournalFollower, RemoteJournalFollower,
 };
 use std::sync::Mutex;
 
@@ -33,6 +33,9 @@ pub fn run() {
     // Initialize known hosts storage for SSH host key verification
     let known_hosts =
         new_shared_known_hosts_storage().expect("Failed to initialize known hosts storage");
+    // Initialize offline database for cached journal logs
+    let offline_db =
+        new_shared_offline_database().expect("Failed to initialize offline database");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -57,6 +60,8 @@ pub fn run() {
             known_hosts,
         )))
         .manage(RemoteFollowerState(Mutex::new(RemoteJournalFollower::new())))
+        // Offline database state
+        .manage(OfflineDatabaseState(offline_db))
         .invoke_handler(tauri::generate_handler![
             // Local journal commands
             query_journal,
