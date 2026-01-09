@@ -81,7 +81,9 @@ export const useFilterStore = create<FilterState>((set) => ({
       entries: [...state.entries, ...newEntries],
     })),
 
-  // Add new entries at the beginning (for follow mode with newest-first display)
+  // Add new entries for follow mode - respects sort order
+  // For newest-first (reverse: true): prepend entries (new at top)
+  // For oldest-first (reverse: false): append entries (new at bottom)
   // Deduplicate by cursor and filter by current priority settings
   prependEntries: (newEntries) =>
     set((state) => {
@@ -103,9 +105,21 @@ export const useFilterStore = create<FilterState>((set) => ({
       });
 
       if (uniqueNewEntries.length === 0) return state;
-      return {
-        entries: [...uniqueNewEntries, ...state.entries],
-      };
+
+      // Check sort order: reverse=true means newest-first, reverse=false means oldest-first
+      const isNewestFirst = state.filter.reverse !== false; // default to true if undefined
+
+      if (isNewestFirst) {
+        // Newest-first: prepend new entries (they appear at the top)
+        return {
+          entries: [...uniqueNewEntries, ...state.entries],
+        };
+      } else {
+        // Oldest-first: append new entries (they appear at the bottom)
+        return {
+          entries: [...state.entries, ...uniqueNewEntries],
+        };
+      }
     }),
 
   setLoading: (isLoading) => set({ isLoading }),

@@ -175,15 +175,22 @@ export function LogViewer() {
     });
   }, [pause, resume]);
 
-  // Scroll to top (where newest entries appear in follow mode)
-  const scrollToTop = useCallback(() => {
+  // Scroll to the end where new entries appear in follow mode
+  // For newest-first (reverse: true): scroll to top
+  // For oldest-first (reverse: false): scroll to bottom
+  const scrollToLatest = useCallback(() => {
     if (!parentRef.current) return;
     viewerState.current.isScrolling = true;
-    parentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    const isNewestFirst = filter.reverse !== false;
+    if (isNewestFirst) {
+      parentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      parentRef.current.scrollTo({ top: parentRef.current.scrollHeight, behavior: 'smooth' });
+    }
     setTimeout(() => {
       viewerState.current.isScrolling = false;
     }, 500);
-  }, []);
+  }, [filter.reverse]);
 
   // Store scroll handler deps in refs to avoid recreating debounced function
   const scrollDepsRef = useRef({
@@ -191,12 +198,14 @@ export function LogViewer() {
     isFollowPaused,
     expandedRowsSize: expandedRows.size,
     userScrolled,
+    isNewestFirst: filter.reverse !== false,
   });
   scrollDepsRef.current = {
     isFollowing,
     isFollowPaused,
     expandedRowsSize: expandedRows.size,
     userScrolled,
+    isNewestFirst: filter.reverse !== false,
   };
 
   const handleScroll = useMemo(() => {
@@ -205,19 +214,23 @@ export function LogViewer() {
     const scrollHandler = () => {
       if (!parentRef.current) return;
 
-      const { scrollTop } = parentRef.current;
-      const { isFollowing, isFollowPaused, expandedRowsSize, userScrolled } = scrollDepsRef.current;
+      const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
+      const { isFollowing, isFollowPaused, expandedRowsSize, userScrolled, isNewestFirst } = scrollDepsRef.current;
 
       // Handle follow mode scroll behavior
+      // For newest-first: new entries at top, so check if at top
+      // For oldest-first: new entries at bottom, so check if at bottom
       if (isFollowing && !viewerState.current.isScrolling) {
-        const atTop = scrollTop < 50;
+        const atLatest = isNewestFirst
+          ? scrollTop < 50  // At top for newest-first
+          : scrollHeight - scrollTop - clientHeight < 50;  // At bottom for oldest-first
 
-        if (!atTop && !userScrolled) {
-          // User scrolled away from top - pause follow mode
+        if (!atLatest && !userScrolled) {
+          // User scrolled away from latest entries - pause follow mode
           setUserScrolled(true);
           pause();
-        } else if (atTop && userScrolled) {
-          // User scrolled back to top - resume follow mode
+        } else if (atLatest && userScrolled) {
+          // User scrolled back to latest entries - resume follow mode
           setUserScrolled(false);
           resume();
         }
@@ -243,15 +256,15 @@ export function LogViewer() {
     };
   }, [pause, resume, updateAnchor]);
 
-  // Handle new entries in follow mode - scroll to top or maintain anchor position
+  // Handle new entries in follow mode - scroll to latest or maintain anchor position
   useEffect(() => {
     const prevLength = viewerState.current.prevEntriesLength;
     const newLength = entries.length;
 
     if (isFollowing && newLength > prevLength) {
-      // Follow mode: scroll to top if not paused and no rows are expanded
+      // Follow mode: scroll to latest entries if not paused and no rows are expanded
       if (!isFollowPaused && expandedRows.size === 0) {
-        scrollToTop();
+        scrollToLatest();
         viewerState.current.anchor = null;
       } else if (parentRef.current && viewerState.current.anchor) {
         const parent = parentRef.current;
@@ -269,7 +282,7 @@ export function LogViewer() {
       }
     }
     viewerState.current.prevEntriesLength = newLength;
-  }, [entries, entries.length, expandedRows.size, isFollowing, isFollowPaused, scrollToTop]);
+  }, [entries, entries.length, expandedRows.size, isFollowing, isFollowPaused, scrollToLatest]);
 
   // Reset user scrolled state and expanded rows when follow mode stops
   useEffect(() => {
@@ -460,19 +473,19 @@ export function LogViewer() {
         )}
       </div>
 
-      {/* Follow mode paused indicator - floating button to scroll to top */}
+      {/* Follow mode paused indicator - floating button to scroll to latest */}
       {isFollowing && isFollowPaused && (
         <div className="absolute bottom-4 right-4 z-10">
           <button
             onClick={() => {
-              scrollToTop();
+              scrollToLatest();
               resume();
             }}
             className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700
                        text-white text-sm font-medium rounded-lg shadow-lg
                        transition-colors"
           >
-            <ArrowDown className="h-4 w-4 rotate-180" />
+            <ArrowDown className={filter.reverse !== false ? "h-4 w-4 rotate-180" : "h-4 w-4"} />
             Resume following
           </button>
         </div>
