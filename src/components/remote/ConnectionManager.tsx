@@ -1,29 +1,19 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  X,
-  Plus,
-  Server,
-  Trash2,
-  Edit3,
-  Check,
-  Loader2,
-  AlertCircle,
-  Key,
-  Lock,
-  Shield,
-} from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, Plus, Server, Loader2, AlertCircle } from 'lucide-react';
 import { useConnectionStore } from '../../stores/connectionStore';
 import {
   testHostConnection,
   connectToHostAcceptKey,
-  isKeyringAvailable,
   getHostPassword,
   saveHostPassword,
   deleteHostPassword,
 } from '../../lib/tauri';
-import type { RemoteHost, RemoteHostInput, AuthMethod } from '../../lib/types';
+import { isHostKeyVerificationError, isAuthenticationError, getErrorMessage } from '../../lib/sshErrors';
+import type { RemoteHost, RemoteHostInput } from '../../lib/types';
 import { HostKeyVerificationDialog } from './HostKeyVerificationDialog';
-import clsx from 'clsx';
+import { HostCard } from './HostCard';
+import { HostEditor } from './HostEditor';
+import { PasswordPromptDialog } from './PasswordPromptDialog';
 
 interface ConnectionManagerProps {
   isOpen: boolean;
@@ -58,17 +48,6 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     hostId: string;
     action: 'connect' | 'test';
   } | null>(null);
-  // Use ref for password to avoid persisting in React state/DevTools
-  const passwordRef = useRef<string>('');
-  const passwordInputRef = useRef<HTMLInputElement>(null);
-
-  // Helper to securely clear password from memory
-  const clearPassword = useCallback(() => {
-    passwordRef.current = '';
-    if (passwordInputRef.current) {
-      passwordInputRef.current.value = '';
-    }
-  }, []);
 
   const [hostKeyVerification, setHostKeyVerification] = useState<{
     host: RemoteHost;
@@ -81,13 +60,6 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
       loadHosts();
     }
   }, [isOpen, loadHosts]);
-
-  // Clear password on component unmount for security
-  useEffect(() => {
-    return () => {
-      clearPassword();
-    };
-  }, [clearPassword]);
 
   const handleConnect = async (host: RemoteHost, pwd?: string) => {
     // Check if password is needed
@@ -103,14 +75,13 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
               await connect(host.id, savedPassword);
               return;
             } catch (error) {
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              if (errorMessage.includes('Host key verification required') ||
-                  errorMessage.includes('HOST KEY HAS CHANGED')) {
+              const errorMessage = getErrorMessage(error);
+              if (isHostKeyVerificationError(errorMessage)) {
                 setHostKeyVerification({ host, errorMessage, password: savedPassword });
                 return;
               }
               // If auth failed, prompt for password (saved password might be outdated)
-              if (errorMessage.includes('auth') || errorMessage.includes('Authentication')) {
+              if (isAuthenticationError(errorMessage)) {
                 // Delete outdated password
                 await deleteHostPassword(host.id).catch(() => {});
               } else {
@@ -133,10 +104,9 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     try {
       await connect(host.id, pwd);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       // Check if this is a host key verification error
-      if (errorMessage.includes('Host key verification required') ||
-          errorMessage.includes('HOST KEY HAS CHANGED')) {
+      if (isHostKeyVerificationError(errorMessage)) {
         setHostKeyVerification({ host, errorMessage, password: pwd });
       }
       // Other errors are shown through connection store
@@ -145,34 +115,30 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     }
   };
 
-  const handleConnectWithPassword = async () => {
+  const handleConnectWithPassword = async (password: string) => {
     if (!passwordPrompt) return;
 
     const hostId = passwordPrompt.hostId;
     const action = passwordPrompt.action;
-    const pwd = passwordRef.current;
     const host = hosts.find((h) => h.id === hostId);
 
-    // Clear password immediately after capturing the value
     setPasswordPrompt(null);
-    clearPassword();
-
     setIsConnecting(hostId);
 
     try {
       if (action === 'connect') {
-        await connect(hostId, pwd);
+        await connect(hostId, password);
         // Save password to keyring if enabled and connection succeeded
-        if (host?.savePassword && pwd) {
+        if (host?.savePassword && password) {
           try {
-            await saveHostPassword(hostId, pwd);
+            await saveHostPassword(hostId, password);
           } catch {
             // Silently fail - password save is optional
           }
         }
       } else {
         setIsTesting(hostId);
-        const result = await testHostConnection(hostId, pwd);
+        const result = await testHostConnection(hostId, password);
         setTestResult({
           hostId: hostId,
           success: result.success,
@@ -181,11 +147,10 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
         setIsTesting(null);
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       // Check if this is a host key verification error
-      if (host && (errorMessage.includes('Host key verification required') ||
-          errorMessage.includes('HOST KEY HAS CHANGED'))) {
-        setHostKeyVerification({ host, errorMessage, password: pwd });
+      if (host && isHostKeyVerificationError(errorMessage)) {
+        setHostKeyVerification({ host, errorMessage, password });
       }
       // Other errors are shown through connection store
     } finally {
@@ -209,10 +174,9 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
         message: result.message,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       // Check if this is a host key verification error
-      if (errorMessage.includes('Host key verification required') ||
-          errorMessage.includes('HOST KEY HAS CHANGED')) {
+      if (isHostKeyVerificationError(errorMessage)) {
         setHostKeyVerification({ host, errorMessage });
       } else {
         setTestResult({
@@ -239,6 +203,29 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     await deleteHost(host.id);
   };
 
+  const handleSaveHost = async (input: RemoteHostInput) => {
+    if (editingHost) {
+      // If savePassword was disabled, delete the saved password
+      if (editingHost.savePassword && !input.savePassword) {
+        try {
+          await deleteHostPassword(editingHost.id);
+        } catch {
+          // Silently fail
+        }
+      }
+      await updateHost(editingHost.id, input);
+    } else {
+      await addHost(input);
+    }
+    setEditingHost(null);
+    setIsCreating(false);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingHost(null);
+    setIsCreating(false);
+  };
+
   if (!isOpen) return null;
 
   // Handle host key verification dialog
@@ -252,7 +239,7 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
         await connectToHostAcceptKey(host.id, pwd);
         // Refresh connection state from backend to update the store
         await useConnectionStore.getState().refreshConnectionState();
-      } catch (error) {
+      } catch {
         // Error will be shown through connection store
       } finally {
         setIsConnecting(null);
@@ -273,27 +260,8 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     return (
       <HostEditor
         host={editingHost}
-        onSave={async (input) => {
-          if (editingHost) {
-            // If savePassword was disabled, delete the saved password
-            if (editingHost.savePassword && !input.savePassword) {
-              try {
-                await deleteHostPassword(editingHost.id);
-              } catch {
-                // Silently fail
-              }
-            }
-            await updateHost(editingHost.id, input);
-          } else {
-            await addHost(input);
-          }
-          setEditingHost(null);
-          setIsCreating(false);
-        }}
-        onCancel={() => {
-          setEditingHost(null);
-          setIsCreating(false);
-        }}
+        onSave={handleSaveHost}
+        onCancel={handleCancelEdit}
       />
     );
   }
@@ -301,49 +269,12 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
   if (passwordPrompt) {
     const host = hosts.find((h) => h.id === passwordPrompt.hostId);
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-        <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-sm p-6">
-          <h3 className="text-lg font-semibold text-theme mb-4">
-            {passwordPrompt.action === 'connect' ? 'Connect to' : 'Test connection to'} {host?.name}
-          </h3>
-          <p className="text-sm text-theme-secondary mb-4">
-            {host?.authMethod === 'password'
-              ? 'Enter password for authentication'
-              : 'Enter key passphrase (leave empty if none)'}
-          </p>
-          <input
-            type="password"
-            ref={passwordInputRef}
-            onChange={(e) => { passwordRef.current = e.target.value; }}
-            placeholder={host?.authMethod === 'password' ? 'Password' : 'Key passphrase (optional)'}
-            className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme mb-4"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                handleConnectWithPassword();
-              }
-            }}
-          />
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={() => {
-                setPasswordPrompt(null);
-                clearPassword();
-              }}
-              className="px-4 py-2 text-sm text-theme-secondary hover:text-theme"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConnectWithPassword}
-              className="px-4 py-2 text-sm font-medium bg-accent-theme text-white rounded-lg hover:opacity-90"
-              style={{ backgroundColor: 'var(--color-accent)' }}
-            >
-              {passwordPrompt.action === 'connect' ? 'Connect' : 'Test'}
-            </button>
-          </div>
-        </div>
-      </div>
+      <PasswordPromptDialog
+        host={host}
+        action={passwordPrompt.action}
+        onSubmit={handleConnectWithPassword}
+        onCancel={() => setPasswordPrompt(null)}
+      />
     );
   }
 
@@ -417,375 +348,6 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
             Add Host
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-interface HostCardProps {
-  host: RemoteHost;
-  isConnected: boolean;
-  isConnecting: boolean;
-  isTesting: boolean;
-  testResult: { success: boolean; message: string } | null;
-  onConnect: () => void;
-  onDisconnect: () => void;
-  onTest: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}
-
-function HostCard({
-  host,
-  isConnected,
-  isConnecting,
-  isTesting,
-  testResult,
-  onConnect,
-  onDisconnect,
-  onTest,
-  onEdit,
-  onDelete,
-}: HostCardProps) {
-  const AuthIcon = host.authMethod === 'password' ? Lock : host.authMethod === 'key' ? Key : Shield;
-
-  return (
-    <div
-      className={clsx(
-        'p-4 rounded-lg border-2 transition-colors',
-        isConnected
-          ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
-          : 'border-theme bg-theme-secondary'
-      )}
-    >
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className={clsx(
-              'font-medium',
-              isConnected ? 'text-green-900 dark:text-green-100' : 'text-theme'
-            )}>{host.name}</h3>
-            {isConnected && (
-              <span className="px-2 py-0.5 text-xs font-medium bg-green-500 text-white rounded">
-                Connected
-              </span>
-            )}
-          </div>
-          <p className={clsx(
-            'text-sm mt-1',
-            isConnected ? 'text-green-700 dark:text-green-300' : 'text-theme-secondary'
-          )}>
-            {host.username}@{host.hostname}:{host.port}
-          </p>
-          <div className={clsx(
-            'flex items-center gap-3 mt-2 text-xs',
-            isConnected ? 'text-green-600 dark:text-green-400' : 'text-theme-secondary'
-          )}>
-            <span className="flex items-center gap-1">
-              <AuthIcon className="h-3 w-3" />
-              {host.authMethod === 'agent' ? 'SSH Agent' : host.authMethod === 'key' ? 'Key File' : 'Password'}
-            </span>
-            {host.sudoRequired && (
-              <span className="flex items-center gap-1">
-                <Shield className="h-3 w-3" />
-                Sudo
-              </span>
-            )}
-          </div>
-          {testResult && (
-            <div
-              className={clsx(
-                'mt-2 text-xs',
-                testResult.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-              )}
-            >
-              {testResult.message}
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1">
-          {isConnected ? (
-            <button
-              onClick={onDisconnect}
-              className="px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
-            >
-              Disconnect
-            </button>
-          ) : (
-            <button
-              onClick={onConnect}
-              disabled={isConnecting}
-              className="px-3 py-1.5 text-sm font-medium text-theme bg-theme border border-theme rounded hover:bg-theme-secondary transition-colors disabled:opacity-50"
-            >
-              {isConnecting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                'Connect'
-              )}
-            </button>
-          )}
-          <button
-            onClick={onTest}
-            disabled={isTesting}
-            className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme rounded transition-colors disabled:opacity-50"
-            title="Test connection"
-          >
-            {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-          </button>
-          <button
-            onClick={onEdit}
-            className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme rounded transition-colors"
-            title="Edit"
-          >
-            <Edit3 className="h-4 w-4" />
-          </button>
-          <button
-            onClick={onDelete}
-            disabled={isConnected}
-            className="p-1.5 text-theme-secondary hover:text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors disabled:opacity-50"
-            title={isConnected ? 'Disconnect first to delete' : 'Delete'}
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface HostEditorProps {
-  host: RemoteHost | null;
-  onSave: (input: RemoteHostInput) => Promise<void>;
-  onCancel: () => void;
-}
-
-function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
-  const [name, setName] = useState(host?.name ?? '');
-  const [hostname, setHostname] = useState(host?.hostname ?? '');
-  const [port, setPort] = useState(host?.port ?? 22);
-  const [username, setUsername] = useState(host?.username ?? '');
-  const [authMethod, setAuthMethod] = useState<AuthMethod>(host?.authMethod ?? 'agent');
-  const [keyPath, setKeyPath] = useState(host?.keyPath ?? '~/.ssh/id_rsa');
-  const [sudoRequired, setSudoRequired] = useState(host?.sudoRequired ?? false);
-  const [savePassword, setSavePassword] = useState(host?.savePassword ?? false);
-  const [keyringAvailable, setKeyringAvailable] = useState<boolean | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Check keyring availability on mount
-  useEffect(() => {
-    isKeyringAvailable().then(setKeyringAvailable).catch(() => setKeyringAvailable(false));
-  }, []);
-
-  // Reset savePassword when switching away from password auth
-  useEffect(() => {
-    if (authMethod !== 'password') {
-      setSavePassword(false);
-    }
-  }, [authMethod]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    if (!name.trim() || !hostname.trim() || !username.trim()) {
-      setError('Please fill in all required fields');
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      await onSave({
-        name: name.trim(),
-        hostname: hostname.trim(),
-        port,
-        username: username.trim(),
-        authMethod,
-        keyPath: authMethod === 'key' ? keyPath : undefined,
-        sudoRequired,
-        savePassword: authMethod === 'password' ? savePassword : false,
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-theme">
-          <h2 className="text-lg font-semibold text-theme">
-            {host ? 'Edit Host' : 'Add Host'}
-          </h2>
-          <button
-            onClick={onCancel}
-            className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && (
-            <div className="p-3 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-sm">
-              {error}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-sm font-medium text-theme mb-1">
-              Display Name *
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Server"
-              className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme"
-            />
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium text-theme mb-1">
-                Hostname *
-              </label>
-              <input
-                type="text"
-                value={hostname}
-                onChange={(e) => setHostname(e.target.value)}
-                placeholder="192.168.1.100 or server.example.com"
-                className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-theme mb-1">
-                Port
-              </label>
-              <input
-                type="number"
-                value={port}
-                onChange={(e) => setPort(parseInt(e.target.value) || 22)}
-                className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-theme mb-1">
-              Username *
-            </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="root"
-              className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-theme mb-1">
-              Authentication Method
-            </label>
-            <select
-              value={authMethod}
-              onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
-              className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme"
-            >
-              <option value="agent">SSH Agent</option>
-              <option value="key">Key File</option>
-              <option value="password">Password</option>
-            </select>
-          </div>
-
-          {authMethod === 'key' && (
-            <div>
-              <label className="block text-sm font-medium text-theme mb-1">
-                Key Path
-              </label>
-              <input
-                type="text"
-                value={keyPath}
-                onChange={(e) => setKeyPath(e.target.value)}
-                placeholder="~/.ssh/id_rsa"
-                className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme"
-              />
-            </div>
-          )}
-
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="sudoRequired"
-              checked={sudoRequired}
-              onChange={(e) => setSudoRequired(e.target.checked)}
-              className="rounded"
-            />
-            <label htmlFor="sudoRequired" className="text-sm text-theme">
-              Require sudo for journalctl
-            </label>
-          </div>
-
-          {/* Save Password option - only for password auth */}
-          {authMethod === 'password' && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="savePassword"
-                  checked={savePassword}
-                  onChange={(e) => setSavePassword(e.target.checked)}
-                  disabled={keyringAvailable === false}
-                  className="rounded disabled:opacity-50"
-                />
-                <label
-                  htmlFor="savePassword"
-                  className={clsx(
-                    'text-sm',
-                    keyringAvailable === false ? 'text-theme-secondary' : 'text-theme'
-                  )}
-                >
-                  Save password in system keyring
-                </label>
-              </div>
-              {keyringAvailable === false && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 ml-6">
-                  System keyring not available. Passwords cannot be saved securely.
-                  This may happen on headless servers or systems without a keyring service
-                  (e.g., GNOME Keyring, KWallet, macOS Keychain).
-                </p>
-              )}
-              {keyringAvailable === true && savePassword && (
-                <p className="text-xs text-theme-secondary ml-6">
-                  Password will be stored securely in your system's credential manager.
-                </p>
-              )}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="px-4 py-2 text-sm text-theme-secondary hover:text-theme"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-accent-theme text-white rounded-lg hover:opacity-90 disabled:opacity-50"
-              style={{ backgroundColor: 'var(--color-accent)' }}
-            >
-              {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-              {host ? 'Save Changes' : 'Add Host'}
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );
