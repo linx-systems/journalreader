@@ -171,6 +171,15 @@ export function useJournalLogs() {
     fetchLogs(false);
   }, [fetchLogs]);
 
+  // Cleanup AbortController on unmount to prevent state updates on unmounted component
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   // Track if we were previously in follow mode
   const wasFollowingRef = useRef(isFollowing);
   // Track the filter for comparison (to detect actual filter changes)

@@ -186,6 +186,15 @@ export function usePanelJournalLogs({ hostId, panelPosition }: UsePanelJournalLo
     fetchLogs(false);
   }, [fetchLogs]);
 
+  // Cleanup AbortController on unmount to prevent state updates on unmounted component
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   // Track previous hostId to detect changes
   const prevHostIdRef = useRef(hostId);
   // Track the filter for comparison
