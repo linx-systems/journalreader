@@ -1,18 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useFilterStore } from '../../stores/filterStore';
-import { PRIORITY_LABELS } from '../../lib/types';
+import { PRIORITY_LABELS, PRIORITY_SLIDER_COLORS } from '../../lib/types';
 import clsx from 'clsx';
-
-const PRIORITY_COLORS: Record<number, string> = {
-  0: 'bg-red-600',
-  1: 'bg-orange-500',
-  2: 'bg-amber-500',
-  3: 'bg-yellow-500',
-  4: 'bg-lime-500',
-  5: 'bg-green-500',
-  6: 'bg-sky-500',
-  7: 'bg-gray-400',
-};
 
 export function PriorityFilter() {
   const { filter, setFilter } = useFilterStore();
@@ -124,7 +113,7 @@ export function PriorityFilter() {
               key={p}
               className={clsx(
                 'flex-1 transition-opacity',
-                PRIORITY_COLORS[p],
+                PRIORITY_SLIDER_COLORS[p],
                 p >= minPriority && p <= maxPriority ? 'opacity-100' : 'opacity-20'
               )}
             />

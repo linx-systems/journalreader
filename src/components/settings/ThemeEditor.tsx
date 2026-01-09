@@ -3,6 +3,7 @@ import { X, Save, RotateCcw, Moon, Sun, Type, Palette } from 'lucide-react';
 import { useThemeStore } from '../../stores/themeStore';
 import type { Theme, ThemeColors, ThemeTypography } from '../../lib/theme';
 import { PRIORITY_KEYS, LIGHT_THEME, DARK_THEME } from '../../lib/theme';
+import { PRIORITY_DISPLAY_LABELS } from '../../lib/types';
 import { ThemePreview } from './ThemePreview';
 import clsx from 'clsx';
 
@@ -11,17 +12,6 @@ interface ThemeEditorProps {
   onClose: () => void;
   onSave: () => void;
 }
-
-const PRIORITY_LABELS: Record<string, string> = {
-  emergency: 'Emergency (0)',
-  alert: 'Alert (1)',
-  critical: 'Critical (2)',
-  error: 'Error (3)',
-  warning: 'Warning (4)',
-  notice: 'Notice (5)',
-  info: 'Info (6)',
-  debug: 'Debug (7)',
-};
 
 const FONT_OPTIONS = [
   { label: 'System Default', value: 'system-ui, -apple-system, sans-serif' },
@@ -230,7 +220,7 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
                 </p>
                 {PRIORITY_KEYS.map((key) => (
                   <div key={key} className="space-y-2">
-                    <p className="text-sm font-medium text-theme">{PRIORITY_LABELS[key]}</p>
+                    <p className="text-sm font-medium text-theme">{PRIORITY_DISPLAY_LABELS[key]}</p>
                     <div className="grid grid-cols-2 gap-2">
                       <ColorInput
                         label="Text"

@@ -54,6 +54,7 @@ export interface BootInfo {
   lastEntry?: number;
 }
 
+/** Short labels for priority levels (used in log displays) */
 export const PRIORITY_LABELS: Record<number, string> = {
   0: 'emerg',
   1: 'alert',
@@ -65,6 +66,31 @@ export const PRIORITY_LABELS: Record<number, string> = {
   7: 'debug',
 };
 
+/** Descriptive labels for priority levels (used in settings/theme UI) */
+export const PRIORITY_DISPLAY_LABELS: Record<string, string> = {
+  emergency: 'Emergency (0)',
+  alert: 'Alert (1)',
+  critical: 'Critical (2)',
+  error: 'Error (3)',
+  warning: 'Warning (4)',
+  notice: 'Notice (5)',
+  info: 'Info (6)',
+  debug: 'Debug (7)',
+};
+
+/** Hex color values for each priority level (for charts and canvas rendering) */
+export const PRIORITY_HEX_COLORS: Record<number, string> = {
+  0: '#dc2626', // emerg - red
+  1: '#ea580c', // alert - orange
+  2: '#d97706', // crit - amber
+  3: '#ca8a04', // err - yellow
+  4: '#84cc16', // warning - lime
+  5: '#22c55e', // notice - green
+  6: '#3b82f6', // info - blue
+  7: '#6b7280', // debug - gray
+};
+
+/** Tailwind CSS text color classes for priority levels */
 export const PRIORITY_COLORS: Record<number, string> = {
   0: 'text-red-600 dark:text-red-400',
   1: 'text-orange-600 dark:text-orange-400',
@@ -76,6 +102,7 @@ export const PRIORITY_COLORS: Record<number, string> = {
   7: 'text-gray-500 dark:text-gray-400',
 };
 
+/** Tailwind CSS background color classes for priority level indicators */
 export const PRIORITY_BG_COLORS: Record<number, string> = {
   0: 'bg-red-100 dark:bg-red-900/30',
   1: 'bg-orange-100 dark:bg-orange-900/30',
@@ -85,6 +112,18 @@ export const PRIORITY_BG_COLORS: Record<number, string> = {
   5: 'bg-green-100 dark:bg-green-900/30',
   6: 'bg-sky-100 dark:bg-sky-900/30',
   7: 'bg-gray-100 dark:bg-gray-800/30',
+};
+
+/** Tailwind CSS solid background color classes for slider/track UI elements */
+export const PRIORITY_SLIDER_COLORS: Record<number, string> = {
+  0: 'bg-red-600',
+  1: 'bg-orange-500',
+  2: 'bg-amber-500',
+  3: 'bg-yellow-500',
+  4: 'bg-lime-500',
+  5: 'bg-green-500',
+  6: 'bg-sky-500',
+  7: 'bg-gray-400',
 };
 
 export const DEFAULT_FILTER: JournalFilter = {

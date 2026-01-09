@@ -1,16 +1,6 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import type { PriorityCount } from '../../lib/types';
-
-const PRIORITY_COLORS: Record<number, string> = {
-  0: '#dc2626', // emerg - red
-  1: '#ea580c', // alert - orange
-  2: '#d97706', // crit - amber
-  3: '#ca8a04', // err - yellow
-  4: '#84cc16', // warning - lime
-  5: '#22c55e', // notice - green
-  6: '#3b82f6', // info - blue
-  7: '#6b7280', // debug - gray
-};
+import { PRIORITY_HEX_COLORS } from '../../lib/types';
 
 interface PriorityDistributionProps {
   data: PriorityCount[];
@@ -52,7 +42,7 @@ export function PriorityDistribution({ data, onSliceClick }: PriorityDistributio
               {chartData.map((entry) => (
                 <Cell
                   key={entry.priority}
-                  fill={PRIORITY_COLORS[entry.priority] || '#6b7280'}
+                  fill={PRIORITY_HEX_COLORS[entry.priority] || '#6b7280'}
                 />
               ))}
             </Pie>
