@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import type { FollowEvent, FollowErrorEvent } from '../lib/types';
+import type { JournalEntry, FollowEvent, FollowErrorEvent } from '../lib/types';
 
 /**
  * Centralized store for follow mode state management.
@@ -115,7 +115,7 @@ export function getFilterKey(filter: unknown): string {
  * This is idempotent - calling it multiple times is safe.
  */
 export async function setupListeners(
-  prependEntries: (entries: unknown[]) => void,
+  prependEntries: (entries: JournalEntry[]) => void,
   setError: (error: string | null) => void,
   setFollowing: (following: boolean) => void
 ): Promise<void> {

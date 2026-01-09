@@ -188,8 +188,7 @@ describe('loadSettings', () => {
   it('loads settings from backend', async () => {
     const settings = {
       enabled: true,
-      retentionDays: 60,
-      maxEntries: 50000,
+      syncBoots: 10,
       autoSync: false,
     };
     mockedGetOfflineSettings.mockResolvedValueOnce(settings);
@@ -216,8 +215,7 @@ describe('updateSettings', () => {
   it('updates settings', async () => {
     const newSettings = {
       enabled: true,
-      retentionDays: 90,
-      maxEntries: 200000,
+      syncBoots: 15,
       autoSync: true,
     };
     mockedUpdateOfflineSettings.mockResolvedValueOnce(undefined);
@@ -233,7 +231,7 @@ describe('updateSettings', () => {
     mockedUpdateOfflineSettings.mockRejectedValueOnce(new Error('Failed'));
     mockedGetOfflineSettings.mockResolvedValueOnce(currentSettings);
 
-    const newSettings = { ...currentSettings, retentionDays: 999 };
+    const newSettings = { ...currentSettings, syncBoots: 999 };
 
     await expect(useOfflineStore.getState().updateSettings(newSettings)).rejects.toThrow('Failed');
     expect(mockedGetOfflineSettings).toHaveBeenCalled();

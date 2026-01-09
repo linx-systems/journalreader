@@ -122,7 +122,7 @@ export const useSplitPanelStore = create<SplitPanelStore>((set) => ({
     leftPanel: { ...state.leftPanel, cursorEnd },
   })),
 
-  clearLeftPanel: () => set((state) => ({
+  clearLeftPanel: () => set(() => ({
     leftPanel: { ...defaultPanelState },
   })),
 
@@ -161,7 +161,7 @@ export const useSplitPanelStore = create<SplitPanelStore>((set) => ({
     rightPanel: { ...state.rightPanel, cursorEnd },
   })),
 
-  clearRightPanel: () => set((state) => ({
+  clearRightPanel: () => set(() => ({
     rightPanel: { ...defaultPanelState },
   })),
 

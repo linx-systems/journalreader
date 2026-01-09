@@ -34,7 +34,6 @@ export function useFollowMode() {
   // Access store state and actions
   const {
     lastFilterKey,
-    restartInProgress,
     setLastFilterKey,
     setRestartInProgress,
     clearDebounceTimer,

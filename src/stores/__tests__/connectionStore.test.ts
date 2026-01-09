@@ -32,8 +32,8 @@ function createTestHost(id: string, hostname: string): RemoteHost {
     port: 22,
     username: "testuser",
     authMethod: "password",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    sudoRequired: false,
+    savePassword: false,
   };
 }
 
@@ -131,6 +131,8 @@ describe("connectionStore", () => {
         port: newHost.port,
         username: newHost.username,
         authMethod: "password",
+        sudoRequired: false,
+        savePassword: false,
       });
 
       expect(result).toEqual(newHost);
@@ -151,6 +153,8 @@ describe("connectionStore", () => {
         port: 22,
         username: "user",
         authMethod: "password",
+        sudoRequired: false,
+        savePassword: false,
       });
 
       expect(useConnectionStore.getState().hosts).toHaveLength(2);
@@ -172,6 +176,8 @@ describe("connectionStore", () => {
         port: 22,
         username: "user",
         authMethod: "password",
+        sudoRequired: false,
+        savePassword: false,
       });
 
       expect(result.hostname).toBe("updated.example.com");
@@ -193,6 +199,8 @@ describe("connectionStore", () => {
         port: 22,
         username: "user",
         authMethod: "password",
+        sudoRequired: false,
+        savePassword: false,
       });
 
       const state = useConnectionStore.getState();

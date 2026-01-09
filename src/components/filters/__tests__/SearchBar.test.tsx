@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SearchBar, SearchBarRef } from "../SearchBar";
 import { useFilterStore } from "../../../stores/filterStore";
-import { DEFAULT_FILTER } from "../../../lib/types";
 import { createRef } from "react";
 
 beforeEach(() => {

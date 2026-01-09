@@ -10,9 +10,6 @@ import {
   CloudDownload,
   Link,
   Unlink,
-  Columns2,
-  Rows2,
-  Square,
 } from 'lucide-react';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';

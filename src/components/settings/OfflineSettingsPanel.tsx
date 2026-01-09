@@ -25,7 +25,6 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
     settings,
     storageStats,
     syncStates,
-    isLoadingSettings,
     isLoadingStorageStats,
     loadSettings,
     loadStorageStats,

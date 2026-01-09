@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { logError, logWarning, type AppError, type ErrorContext } from "../errorLogger";
+import { logError, logWarning, type ErrorContext } from "../errorLogger";
 
 describe("errorLogger", () => {
   beforeEach(() => {

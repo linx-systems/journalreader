@@ -7,10 +7,10 @@ import type { JournalEntry } from '../../lib/types';
 function createMockEntry(cursor: string, message: string): JournalEntry {
   return {
     cursor,
-    timestamp: Date.now() * 1000,
+    realtimeTimestamp: Date.now() * 1000,
+    bootId: 'test-boot-id',
     message,
     priority: 6,
-    unit: 'test.service',
     hostname: 'test-host',
     pid: 1234,
     syslogIdentifier: 'test',

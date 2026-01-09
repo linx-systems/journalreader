@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { QuickFilters } from "../QuickFilters";
 import { useFilterStore } from "../../../stores/filterStore";
 import { useBookmarkStore } from "../../../stores/bookmarkStore";
-import { QUICK_FILTERS, DEFAULT_FILTER } from "../../../lib/types";
+import { QUICK_FILTERS } from "../../../lib/types";
 
 beforeEach(() => {
   useFilterStore.getState().resetFilter();

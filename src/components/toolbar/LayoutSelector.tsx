@@ -9,7 +9,6 @@ export function LayoutSelector() {
     layout,
     leftPanelHostId,
     rightPanelHostId,
-    setLayout,
     enterSplitView,
     exitSplitView,
   } = useLayoutStore();

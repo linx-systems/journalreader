@@ -51,8 +51,6 @@ export function useJournalLogs() {
   const isActiveTabRemote = activeTabId !== LOCAL_TAB_ID;
   // Determine if we're connected to the active remote host
   const isConnectedToActiveTab = isActiveTabRemote && connectedHostId === activeTabId && connectionStatus === 'connected';
-  // Legacy isRemote for backward compatibility
-  const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
   // Determine if we're effectively offline - only applies when viewing a remote host tab
   // Local logs are always available directly, they don't need offline mode
   const isEffectivelyOffline = isActiveTabRemote && (isOfflineMode || !isConnectedToActiveTab);
