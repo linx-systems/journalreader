@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Copy, Check, Filter } from 'lucide-react';
 import clsx from 'clsx';
 import { useFilterStore } from '../../stores/filterStore';
 import { ContextMenu } from './ContextMenu';
+import { splitByPattern } from '../../lib/textHighlight';
 
 interface LogEntryProps {
   entry: JournalEntry;
@@ -16,25 +17,19 @@ interface LogEntryProps {
 }
 
 function highlightText(text: string, pattern?: string, caseSensitive?: boolean): React.ReactNode {
-  if (!pattern) return text;
+  const { parts, regex } = splitByPattern(text, pattern, caseSensitive);
 
-  try {
-    const flags = caseSensitive ? 'g' : 'gi';
-    const regex = new RegExp(`(${pattern})`, flags);
-    const parts = text.split(regex);
+  if (!regex) return text;
 
-    return parts.map((part, i) =>
-      regex.test(part) ? (
-        <mark key={i} className="selection-theme rounded px-0.5">
-          {part}
-        </mark>
-      ) : (
-        part
-      )
-    );
-  } catch {
-    return text;
-  }
+  return parts.map((part, i) =>
+    regex.test(part) ? (
+      <mark key={i} className="selection-theme rounded px-0.5">
+        {part}
+      </mark>
+    ) : (
+      part
+    )
+  );
 }
 
 const PRIORITY_CSS_CLASSES: Record<number, string> = {
