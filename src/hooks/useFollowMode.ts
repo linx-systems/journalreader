@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useMemo } from 'react';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { useFilterStore } from '../stores/filterStore';
 import { useConnectionStore } from '../stores/connectionStore';
+import {
+  useFollowModeStore,
+  setupListeners,
+  cleanupListeners,
+  getFilterKey,
+  DEBOUNCE_MS,
+} from '../stores/followModeStore';
 import {
   startFollow,
   stopFollow,
@@ -10,74 +16,6 @@ import {
   getHostPassword,
 } from '../lib/tauri';
 import { logError } from '../lib/errorLogger';
-import type { FollowEvent, FollowErrorEvent } from '../lib/types';
-
-// Helper to create a stable key from filter for comparison
-function getFilterKey(filter: any): string {
-  return JSON.stringify(filter);
-}
-
-// Global state to track if listeners are set up (singleton pattern)
-let listenersSetUp = false;
-let globalUnlistenEntry: UnlistenFn | null = null;
-let globalUnlistenError: UnlistenFn | null = null;
-let globalUnlistenStopped: UnlistenFn | null = null;
-
-// Global state for filter change handling (singleton - only one instance should handle restarts)
-let lastFilterKey: string | null = null;
-let restartInProgress = false;
-let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const DEBOUNCE_MS = 300; // Debounce filter changes by 300ms
-
-async function setupListeners(
-  prependEntries: (entries: any[]) => void,
-  setError: (error: string | null) => void,
-  setFollowing: (following: boolean) => void
-) {
-  if (listenersSetUp) return;
-  listenersSetUp = true;
-
-  globalUnlistenEntry = await listen<FollowEvent>(
-    'journal-follow-entry',
-    (event) => {
-      const { entries } = event.payload;
-      if (entries.length > 0) {
-        prependEntries(entries);
-      }
-    }
-  );
-
-  globalUnlistenError = await listen<FollowErrorEvent>(
-    'journal-follow-error',
-    (event) => {
-      setError(`Follow mode error: ${event.payload.message}`);
-      setFollowing(false);
-    }
-  );
-
-  globalUnlistenStopped = await listen(
-    'journal-follow-stopped',
-    () => {
-      setFollowing(false);
-    }
-  );
-}
-
-function cleanupListeners() {
-  if (globalUnlistenEntry) {
-    globalUnlistenEntry();
-    globalUnlistenEntry = null;
-  }
-  if (globalUnlistenError) {
-    globalUnlistenError();
-    globalUnlistenError = null;
-  }
-  if (globalUnlistenStopped) {
-    globalUnlistenStopped();
-    globalUnlistenStopped = null;
-  }
-  listenersSetUp = false;
-}
 
 export function useFollowMode() {
   const {
@@ -92,6 +30,16 @@ export function useFollowMode() {
 
   const { connectedHostId, connectionStatus } = useConnectionStore();
   const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
+
+  // Access store state and actions
+  const {
+    lastFilterKey,
+    restartInProgress,
+    setLastFilterKey,
+    setRestartInProgress,
+    clearDebounceTimer,
+    setDebounceTimer,
+  } = useFollowModeStore();
 
   // Use refs to track state in callbacks without re-creating them
   const isRemoteRef = useRef(isRemote);
@@ -191,28 +139,27 @@ export function useFollowMode() {
   const filterKey = useMemo(() => getFilterKey(filter), [filter]);
 
   useEffect(() => {
-    // Check if filter actually changed (using global state for singleton behavior)
+    // Check if filter actually changed (using store state for singleton behavior)
     if (lastFilterKey === filterKey) return;
 
-    // Update the global filter key immediately to prevent duplicate handling
+    // Update the filter key immediately to prevent duplicate handling
     const previousKey = lastFilterKey;
-    lastFilterKey = filterKey;
+    setLastFilterKey(filterKey);
 
     // If following, debounce and restart with the new filter
     if (isFollowing && previousKey !== null) {
       // Clear any pending debounce timer
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-      }
+      clearDebounceTimer();
 
       // Debounce the restart to avoid rapid-fire restarts while sliding
-      debounceTimer = setTimeout(() => {
-        // Check if a restart is already in progress
-        if (restartInProgress) {
+      const timer = setTimeout(() => {
+        // Check if a restart is already in progress (use fresh state)
+        const currentState = useFollowModeStore.getState();
+        if (currentState.restartInProgress) {
           return;
         }
 
-        restartInProgress = true;
+        setRestartInProgress(true);
         // Use filterRef.current to get the LATEST filter value, not the stale closure value
         const currentFilter = filterRef.current;
 
@@ -236,26 +183,37 @@ export function useFollowMode() {
               await startFollow(currentFilter);
             }
           } finally {
-            restartInProgress = false;
+            setRestartInProgress(false);
           }
         };
 
         restartFollow().catch((err) => {
-          restartInProgress = false;
+          setRestartInProgress(false);
           const errorMessage = err instanceof Error ? err.message : String(err);
           setError(`Failed to update follow filter: ${errorMessage}`);
           setFollowing(false);
         });
       }, DEBOUNCE_MS);
+
+      setDebounceTimer(timer);
     }
 
     // Cleanup debounce timer on unmount or filter change
     return () => {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-      }
+      clearDebounceTimer();
     };
-  }, [filter, filterKey, isFollowing, setError, setFollowing]);
+  }, [
+    filter,
+    filterKey,
+    isFollowing,
+    lastFilterKey,
+    setLastFilterKey,
+    setRestartInProgress,
+    clearDebounceTimer,
+    setDebounceTimer,
+    setError,
+    setFollowing,
+  ]);
 
   return {
     isFollowing,
