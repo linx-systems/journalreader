@@ -4,6 +4,19 @@
  */
 
 // =============================================================================
+// Network Constants
+// =============================================================================
+
+/** Minimum valid port number (TCP/UDP) */
+export const PORT_MIN = 1;
+
+/** Maximum valid port number (TCP/UDP) */
+export const PORT_MAX = 65535;
+
+/** Default SSH port */
+export const DEFAULT_SSH_PORT = 22;
+
+// =============================================================================
 // Time Unit Constants (in milliseconds)
 // =============================================================================
 

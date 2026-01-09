@@ -2,7 +2,12 @@ import { useState, useEffect } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { isKeyringAvailable } from '../../lib/tauri';
 import type { RemoteHost, RemoteHostInput, AuthMethod } from '../../lib/types';
+import { PORT_MIN, PORT_MAX, DEFAULT_SSH_PORT } from '../../lib/constants';
 import clsx from 'clsx';
+
+function isValidPort(port: number): boolean {
+  return Number.isInteger(port) && port >= PORT_MIN && port <= PORT_MAX;
+}
 
 export interface HostEditorProps {
   host: RemoteHost | null;
@@ -13,7 +18,7 @@ export interface HostEditorProps {
 export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
   const [name, setName] = useState(host?.name ?? '');
   const [hostname, setHostname] = useState(host?.hostname ?? '');
-  const [port, setPort] = useState(host?.port ?? 22);
+  const [port, setPort] = useState(host?.port ?? DEFAULT_SSH_PORT);
   const [username, setUsername] = useState(host?.username ?? '');
   const [authMethod, setAuthMethod] = useState<AuthMethod>(host?.authMethod ?? 'agent');
   const [keyPath, setKeyPath] = useState(host?.keyPath ?? '~/.ssh/id_rsa');
@@ -41,6 +46,11 @@ export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
 
     if (!name.trim() || !hostname.trim() || !username.trim()) {
       setError('Please fill in all required fields');
+      return;
+    }
+
+    if (!isValidPort(port)) {
+      setError(`Port must be between ${PORT_MIN} and ${PORT_MAX}`);
       return;
     }
 
@@ -117,8 +127,13 @@ export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
               </label>
               <input
                 type="number"
+                min={PORT_MIN}
+                max={PORT_MAX}
                 value={port}
-                onChange={(e) => setPort(parseInt(e.target.value) || 22)}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value, 10);
+                  setPort(isNaN(value) ? DEFAULT_SSH_PORT : value);
+                }}
                 className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme"
               />
             </div>
