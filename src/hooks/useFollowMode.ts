@@ -103,8 +103,6 @@ export function useFollowMode() {
 
   // Start follow mode
   const start = useCallback(async () => {
-    console.log('[useFollowMode] start() called with filter:', filter);
-    console.log('[useFollowMode] isRemote:', isRemoteRef.current);
     try {
       // Set up listeners if not already done
       await setupListeners(prependEntries, setError, setFollowing);
@@ -120,7 +118,6 @@ export function useFollowMode() {
           const savedPassword = await getHostPassword(hostId);
           password = savedPassword ?? undefined;
         }
-        console.log('[useFollowMode] Calling startRemoteFollow with filter:', filter);
         await startRemoteFollow(filter, password);
       } else {
         await startFollow(filter);
@@ -212,14 +209,12 @@ export function useFollowMode() {
       debounceTimer = setTimeout(() => {
         // Check if a restart is already in progress
         if (restartInProgress) {
-          console.log('[useFollowMode] Restart already in progress, skipping');
           return;
         }
 
         restartInProgress = true;
         // Use filterRef.current to get the LATEST filter value, not the stale closure value
         const currentFilter = filterRef.current;
-        console.log('[useFollowMode] Filter changed while following, restarting with:', currentFilter);
 
         const restartFollow = async () => {
           try {
@@ -236,10 +231,8 @@ export function useFollowMode() {
                 const savedPassword = await getHostPassword(hostId);
                 password = savedPassword ?? undefined;
               }
-              console.log('[useFollowMode] Restarting remote follow with filter:', currentFilter);
               await startRemoteFollow(currentFilter, password);
             } else {
-              console.log('[useFollowMode] Restarting local follow with filter:', currentFilter);
               await startFollow(currentFilter);
             }
           } finally {
