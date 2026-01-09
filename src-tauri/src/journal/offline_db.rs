@@ -271,11 +271,13 @@ impl OfflineDatabase {
     }
 
     /// Get a reference to the database connection
+    #[cfg(test)]
     pub fn connection(&self) -> &Connection {
         &self.conn
     }
 
     /// Verify the database schema is correct
+    #[cfg(test)]
     pub fn verify_schema(&self) -> Result<bool, JournalError> {
         // Check that all required tables exist
         let tables = ["journal_entries", "sync_state", "offline_settings"];

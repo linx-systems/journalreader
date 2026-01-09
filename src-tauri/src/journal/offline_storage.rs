@@ -151,6 +151,7 @@ impl OfflineDatabase {
 
     /// Delete entries older than a given timestamp for a host.
     /// Returns the number of entries deleted.
+    #[cfg(test)]
     pub fn delete_entries_before(
         &self,
         host_id: &str,

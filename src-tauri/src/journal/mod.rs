@@ -28,6 +28,6 @@ pub use remote_follower::RemoteJournalFollower;
 pub use remote_reader::RemoteJournalReader;
 pub use ssh::{new_shared_connection_manager, SharedConnectionManager};
 pub use types::*;
-pub use offline_db::{new_shared_offline_database, OfflineDatabase, SharedOfflineDatabase};
+pub use offline_db::{new_shared_offline_database, SharedOfflineDatabase};
 pub use offline_types::{OfflineSettings, RetentionPolicy, RetentionResult, StorageStats, SyncState, SyncStatus};
-pub use sync_engine::{SyncEngine, SyncProgressEvent, SyncProgressStatus, SyncResult};
+pub use sync_engine::{SyncEngine, SyncResult};

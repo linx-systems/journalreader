@@ -5,7 +5,7 @@
 
 use crate::error::JournalError;
 use crate::journal::offline_db::OfflineDatabase;
-use crate::journal::offline_types::{SyncState, SyncStatus};
+use crate::journal::offline_types::SyncStatus;
 use crate::journal::remote_reader::RemoteJournalReader;
 use crate::journal::ssh::ConnectionManager;
 use crate::journal::types::JournalFilter;
@@ -16,8 +16,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 
-// Re-export retention types for convenience
-pub use crate::journal::offline_types::{RetentionPolicy, RetentionResult};
 
 /// Batch size for fetching entries within each boot
 const SYNC_BATCH_SIZE: u32 = 1000;
@@ -398,22 +396,6 @@ impl SyncEngine {
         }
     }
 
-    /// Resume an interrupted sync for a host.
-    ///
-    /// This is equivalent to calling `sync_host` - it will automatically
-    /// resume from the last saved cursor position.
-    pub fn resume_sync(
-        host_id: &str,
-        host_name: &str,
-        conn: &ConnectionManager,
-        db: &OfflineDatabase,
-        cancel_flag: Arc<AtomicBool>,
-        app_handle: Option<&AppHandle>,
-    ) -> SyncResult {
-        // Resume is the same as sync - the cursor position is preserved
-        Self::sync_host(host_id, host_name, conn, db, cancel_flag, app_handle)
-    }
-
     /// Check if a sync can be resumed for a host.
     ///
     /// Returns true if there's a stored cursor position that can be resumed from.
@@ -429,6 +411,7 @@ impl SyncEngine {
 mod tests {
     use super::*;
     use crate::journal::known_hosts::new_shared_known_hosts_storage;
+    use crate::journal::offline_types::SyncState;
     use crate::journal::ssh::ConnectionManager;
     use crate::journal::types::JournalEntry;
     use rusqlite::Connection;
