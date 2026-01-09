@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { Virtualizer } from '@tanstack/react-virtual';
+import { KEYBOARD_SEQUENCE_TIMEOUT_MS } from '../lib/constants';
 
 export interface KeyboardNavigationOptions {
   /** Total number of items in the list */
@@ -124,8 +125,8 @@ export function useKeyboardNavigation({
       }
 
       case 'g': {
-        // Check for 'gg' sequence (within 500ms)
-        if (lastKey?.key === 'g' && now - lastKey.time < 500) {
+        // Check for 'gg' sequence
+        if (lastKey?.key === 'g' && now - lastKey.time < KEYBOARD_SEQUENCE_TIMEOUT_MS) {
           e.preventDefault();
           onSelectionChange(0);
           scrollToIndex(0);

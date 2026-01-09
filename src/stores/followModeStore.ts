@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import type { JournalEntry, JournalFilter, FollowEvent, FollowErrorEvent } from '../lib/types';
+import { DEBOUNCE_MS } from '../lib/constants';
+
+export { DEBOUNCE_MS };
 
 /**
  * Centralized store for follow mode state management.
@@ -98,9 +101,6 @@ export const useFollowModeStore = create<FollowModeState>((set, get) => ({
     });
   },
 }));
-
-// Constants
-export const DEBOUNCE_MS = 300;
 
 /**
  * Set up Tauri event listeners for follow mode.

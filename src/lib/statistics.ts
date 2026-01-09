@@ -1,9 +1,13 @@
 import type { TimeGranularity } from './types';
-
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
-const WEEK_MS = 7 * DAY_MS;
+import {
+  MINUTE_MS,
+  HOUR_MS,
+  DAY_MS,
+  WEEK_MS,
+  DEFAULT_TIME_RANGE_MS,
+  GRANULARITY_THRESHOLDS,
+  GRANULARITY_BUCKET_SIZES,
+} from './constants';
 
 export function computeGranularityMs(
   granularity: TimeGranularity,
@@ -12,26 +16,26 @@ export function computeGranularityMs(
 ): number {
   if (granularity !== 'auto') {
     const map: Record<Exclude<TimeGranularity, 'auto'>, number> = {
-      '10min': 10 * MINUTE_MS,
-      '1hour': HOUR_MS,
-      '6hour': 6 * HOUR_MS,
-      '1day': DAY_MS,
-      '1week': WEEK_MS,
+      '10min': GRANULARITY_BUCKET_SIZES.TEN_MINUTES,
+      '1hour': GRANULARITY_BUCKET_SIZES.ONE_HOUR,
+      '6hour': GRANULARITY_BUCKET_SIZES.SIX_HOURS,
+      '1day': GRANULARITY_BUCKET_SIZES.ONE_DAY,
+      '1week': GRANULARITY_BUCKET_SIZES.ONE_WEEK,
     };
     return map[granularity];
   }
 
   // Auto-detect based on time range
   const now = Date.now();
-  const start = since ? parseRelativeTime(since) : now - 15 * MINUTE_MS;
+  const start = since ? parseRelativeTime(since) : now - DEFAULT_TIME_RANGE_MS;
   const end = until ? parseRelativeTime(until) : now;
   const rangeMs = end - start;
 
-  if (rangeMs < 6 * HOUR_MS) return 10 * MINUTE_MS; // 10 min buckets
-  if (rangeMs <= DAY_MS) return HOUR_MS; // 1 hour buckets
-  if (rangeMs <= 7 * DAY_MS) return 6 * HOUR_MS; // 6 hour buckets
-  if (rangeMs <= 30 * DAY_MS) return DAY_MS; // 1 day buckets
-  return WEEK_MS; // 1 week buckets
+  if (rangeMs < GRANULARITY_THRESHOLDS.SIX_HOURS) return GRANULARITY_BUCKET_SIZES.TEN_MINUTES;
+  if (rangeMs <= GRANULARITY_THRESHOLDS.ONE_DAY) return GRANULARITY_BUCKET_SIZES.ONE_HOUR;
+  if (rangeMs <= GRANULARITY_THRESHOLDS.ONE_WEEK) return GRANULARITY_BUCKET_SIZES.SIX_HOURS;
+  if (rangeMs <= GRANULARITY_THRESHOLDS.ONE_MONTH) return GRANULARITY_BUCKET_SIZES.ONE_DAY;
+  return GRANULARITY_BUCKET_SIZES.ONE_WEEK;
 }
 
 function parseRelativeTime(timeStr: string): number {

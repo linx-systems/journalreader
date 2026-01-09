@@ -6,6 +6,7 @@ import { useScrollSyncStore } from '../stores/scrollSyncStore';
 import { queryJournal, queryRemoteJournal } from '../lib/tauri';
 import { queryOfflineJournal } from '../lib/offlineTauri';
 import { filtersEqual } from '../lib/types';
+import { SCROLL_SYNC_OFFSET_MS, DEBOUNCE_MS } from '../lib/constants';
 
 /**
  * Check if an error is a connection-related error that should trigger offline fallback.
@@ -204,8 +205,8 @@ export function useJournalLogs() {
         // Convert microseconds to Date, then to ISO string for the 'since' filter
         // Go back a bit from the anchor to ensure we have context
         const anchorDate = new Date(anchorTimestamp / 1000);
-        // Load entries from 5 minutes before the anchor timestamp
-        const sinceDate = new Date(anchorDate.getTime() - 5 * 60 * 1000);
+        // Load entries from before the anchor timestamp
+        const sinceDate = new Date(anchorDate.getTime() - SCROLL_SYNC_OFFSET_MS);
         const sinceIso = sinceDate.toISOString();
 
         // Store the sync-adjusted since so fetchLogs can use it
@@ -267,7 +268,7 @@ export function useJournalLogs() {
 
     debounceTimerRef.current = setTimeout(() => {
       fetchLogs(false);
-    }, 300);
+    }, DEBOUNCE_MS);
 
     return () => {
       if (debounceTimerRef.current) {
