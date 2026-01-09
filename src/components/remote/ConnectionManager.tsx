@@ -9,6 +9,7 @@ import {
   deleteHostPassword,
 } from '../../lib/tauri';
 import { isHostKeyVerificationError, isAuthenticationError, getErrorMessage } from '../../lib/sshErrors';
+import { logError } from '../../lib/errorLogger';
 import type { RemoteHost, RemoteHostInput } from '../../lib/types';
 import { HostKeyVerificationDialog } from './HostKeyVerificationDialog';
 import { HostCard } from './HostCard';
@@ -82,8 +83,10 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
               }
               // If auth failed, prompt for password (saved password might be outdated)
               if (isAuthenticationError(errorMessage)) {
-                // Delete outdated password
-                await deleteHostPassword(host.id).catch(() => {});
+                // Delete outdated password - may fail if password doesn't exist in keyring
+                await deleteHostPassword(host.id).catch((err) =>
+                  logError(err, { component: 'ConnectionManager', action: 'deleteOutdatedPassword', hostId: host.id })
+                );
               } else {
                 // Other errors are shown through connection store
                 return;
@@ -132,8 +135,9 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
         if (host?.savePassword && password) {
           try {
             await saveHostPassword(hostId, password);
-          } catch {
-            // Silently fail - password save is optional
+          } catch (err) {
+            // Password save is optional - log but don't fail the connection
+            logError(err, { component: 'ConnectionManager', action: 'savePassword', hostId });
           }
         }
       } else {
@@ -196,8 +200,9 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     if (host.savePassword) {
       try {
         await deleteHostPassword(host.id);
-      } catch {
-        // Silently fail - host deletion should still proceed
+      } catch (err) {
+        // Password deletion is optional - log but still proceed with host deletion
+        logError(err, { component: 'ConnectionManager', action: 'deletePasswordOnHostDelete', hostId: host.id });
       }
     }
     await deleteHost(host.id);
@@ -209,8 +214,9 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
       if (editingHost.savePassword && !input.savePassword) {
         try {
           await deleteHostPassword(editingHost.id);
-        } catch {
-          // Silently fail
+        } catch (err) {
+          // Password deletion is optional - log but still proceed with host update
+          logError(err, { component: 'ConnectionManager', action: 'deletePasswordOnSavePasswordDisabled', hostId: editingHost.id });
         }
       }
       await updateHost(editingHost.id, input);

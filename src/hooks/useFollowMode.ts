@@ -81,10 +81,16 @@ export function useFollowMode() {
   // Stop follow mode
   const stop = useCallback(async () => {
     try {
-      // Stop both local and remote - only the active one will actually do anything
+      // Stop both local and remote - only the active one will actually do anything.
+      // Errors from the inactive one are expected (e.g., "not running"), so we log
+      // but don't propagate them.
       await Promise.all([
-        stopFollow().catch(() => {}),
-        stopRemoteFollow().catch(() => {}),
+        stopFollow().catch((err) =>
+          logError(err, { component: 'useFollowMode', action: 'stopFollow' })
+        ),
+        stopRemoteFollow().catch((err) =>
+          logError(err, { component: 'useFollowMode', action: 'stopRemoteFollow' })
+        ),
       ]);
     } catch (err) {
       logError(err, { component: 'useFollowMode', action: 'stopFollow' });
