@@ -31,7 +31,7 @@ A modern, native Linux desktop application for reading and filtering system jour
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/linx-systems/journalreader.git
 cd journalreader
 
 # Install dependencies
