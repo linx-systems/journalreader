@@ -171,14 +171,14 @@ export function Toolbar() {
         </button>
 
         {/* Offline controls - only show when active tab is a remote host */}
-        {showOfflineControls && connectedHostId && (
+        {showOfflineControls && (
           <>
             {/* Divider */}
             <div className="h-6 w-px bg-theme-secondary/30" />
 
             {/* Sync button */}
             <button
-              onClick={() => triggerSync(connectedHostId)}
+              onClick={() => triggerSync(activeTabId)}
               disabled={isSyncing}
               className={clsx(
                 'flex items-center gap-1 px-2 py-1.5 text-sm font-medium rounded-lg transition-colors',

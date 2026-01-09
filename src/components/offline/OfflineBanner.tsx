@@ -1,7 +1,7 @@
 import { WifiOff } from 'lucide-react';
 import { useOfflineStore } from '../../stores/offlineStore';
 import { useOfflineSync } from '../../hooks/useOfflineSync';
-import { useConnectionStore } from '../../stores/connectionStore';
+import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
 
 /**
  * Format a timestamp into a human-readable relative time string.
@@ -30,15 +30,15 @@ function formatRelativeTime(timestamp: number): string {
 /**
  * Banner component that displays when the app is in offline mode.
  * Shows the offline status, last sync time, and a reconnect button.
- * Only displays when connected to a remote host - local logs are always available.
+ * Only displays when viewing a remote host tab - local logs are always available.
  */
 export function OfflineBanner() {
   const { setOfflineMode } = useOfflineStore();
   const { lastSyncTime, isOffline } = useOfflineSync();
-  const { connectedHostId } = useConnectionStore();
+  const { activeTabId } = useConnectionStore();
 
-  // Don't show banner for local logs - they're always available
-  if (!connectedHostId) return null;
+  // Don't show banner for local tab - local logs are always available
+  if (activeTabId === LOCAL_TAB_ID) return null;
 
   if (!isOffline) return null;
 

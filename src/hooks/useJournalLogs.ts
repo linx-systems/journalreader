@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useFilterStore } from '../stores/filterStore';
-import { useConnectionStore } from '../stores/connectionStore';
+import { useConnectionStore, LOCAL_TAB_ID } from '../stores/connectionStore';
 import { useOfflineStore } from '../stores/offlineStore';
 import { queryJournal, queryRemoteJournal } from '../lib/tauri';
 import { queryOfflineJournal } from '../lib/offlineTauri';
@@ -42,26 +42,34 @@ export function useJournalLogs() {
     setCursorEnd,
   } = useFilterStore();
 
-  const { connectedHostId, connectionStatus } = useConnectionStore();
+  const { connectedHostId, connectionStatus, activeTabId } = useConnectionStore();
   const { isOfflineMode, setOfflineMode } = useOfflineStore();
+
+  // Determine if the active tab is a remote host
+  const isActiveTabRemote = activeTabId !== LOCAL_TAB_ID;
+  // Determine if we're connected to the active remote host
+  const isConnectedToActiveTab = isActiveTabRemote && connectedHostId === activeTabId && connectionStatus === 'connected';
+  // Legacy isRemote for backward compatibility
   const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
-  // Determine if we're effectively offline - only applies when connected to a remote host
+  // Determine if we're effectively offline - only applies when viewing a remote host tab
   // Local logs are always available directly, they don't need offline mode
-  const isEffectivelyOffline = connectedHostId !== null && (isOfflineMode || connectionStatus !== 'connected');
+  const isEffectivelyOffline = isActiveTabRemote && (isOfflineMode || !isConnectedToActiveTab);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Use refs to access current values without causing effect re-runs
   const filterRef = useRef(filter);
   const cursorEndRef = useRef(cursorEnd);
-  const isRemoteRef = useRef(isRemote);
+  const isConnectedToActiveTabRef = useRef(isConnectedToActiveTab);
   const isEffectivelyOfflineRef = useRef(isEffectivelyOffline);
-  const connectedHostIdRef = useRef(connectedHostId);
+  const activeTabIdRef = useRef(activeTabId);
+  const isActiveTabRemoteRef = useRef(isActiveTabRemote);
   filterRef.current = filter;
   cursorEndRef.current = cursorEnd;
-  isRemoteRef.current = isRemote;
+  isConnectedToActiveTabRef.current = isConnectedToActiveTab;
   isEffectivelyOfflineRef.current = isEffectivelyOffline;
-  connectedHostIdRef.current = connectedHostId;
+  activeTabIdRef.current = activeTabId;
+  isActiveTabRemoteRef.current = isActiveTabRemote;
 
   const fetchLogs = useCallback(async (append = false) => {
     // Cancel any pending request
@@ -77,21 +85,22 @@ export function useJournalLogs() {
       const currentFilter = filterRef.current;
       const currentCursorEnd = cursorEndRef.current;
       const currentIsOffline = isEffectivelyOfflineRef.current;
-      const currentHostId = connectedHostIdRef.current;
+      const currentActiveTabId = activeTabIdRef.current;
+      const currentIsActiveTabRemote = isActiveTabRemoteRef.current;
+      const currentIsConnectedToActiveTab = isConnectedToActiveTabRef.current;
       const filterToUse = append && currentCursorEnd
         ? { ...currentFilter, afterCursor: currentCursorEnd }
         : currentFilter;
 
       let result;
       if (currentIsOffline) {
-        // Query offline storage when in offline mode
-        const hostId = currentHostId ?? 'local';
-        result = await queryOfflineJournal(hostId, filterToUse);
-      } else if (isRemoteRef.current) {
-        // Query remote host when connected
+        // Query offline storage when in offline mode or not connected to active remote tab
+        result = await queryOfflineJournal(currentActiveTabId, filterToUse);
+      } else if (currentIsActiveTabRemote && currentIsConnectedToActiveTab) {
+        // Query remote host when connected to the active tab's host
         result = await queryRemoteJournal(filterToUse);
       } else {
-        // Query local journal when not connected
+        // Query local journal when viewing local tab
         result = await queryJournal(filterToUse);
       }
 
@@ -108,17 +117,16 @@ export function useJournalLogs() {
 
       // Auto-fallback: if remote query fails with connection error, switch to offline mode
       const currentIsOffline = isEffectivelyOfflineRef.current;
-      const currentHostId = connectedHostIdRef.current;
+      const currentActiveTabId = activeTabIdRef.current;
       if (!currentIsOffline && isConnectionError(err)) {
         try {
           await setOfflineMode(true);
-          const hostId = currentHostId ?? 'local';
           const currentFilter = filterRef.current;
           const currentCursorEnd = cursorEndRef.current;
           const filterToUse = append && currentCursorEnd
             ? { ...currentFilter, afterCursor: currentCursorEnd }
             : currentFilter;
-          const result = await queryOfflineJournal(hostId, filterToUse);
+          const result = await queryOfflineJournal(currentActiveTabId, filterToUse);
 
           if (append) {
             appendEntries(result.entries);
@@ -156,21 +164,21 @@ export function useJournalLogs() {
   // Track the filter for comparison (to detect actual filter changes)
   // Initialize to null so the first render triggers an initial fetch
   const prevFilterRef = useRef<typeof filter | null>(null);
-  // Track connection state to refresh when it changes
-  const prevIsRemoteRef = useRef(isRemote);
+  // Track active tab to refresh when it changes
+  const prevActiveTabIdRef = useRef(activeTabId);
   // Track offline mode to refresh when it changes
   const prevIsOfflineModeRef = useRef(isOfflineMode);
 
-  // Refresh when connection state changes
+  // Refresh when active tab changes - this is the primary trigger for tab switching
   useEffect(() => {
-    if (prevIsRemoteRef.current !== isRemote) {
-      prevIsRemoteRef.current = isRemote;
-      // Clear entries and fetch fresh data from the new source
+    if (prevActiveTabIdRef.current !== activeTabId) {
+      prevActiveTabIdRef.current = activeTabId;
+      // Clear entries and fetch fresh data from the new tab's source
       setEntries([]);
       setCursorEnd(null);
       fetchLogs(false);
     }
-  }, [isRemote, setEntries, setCursorEnd, fetchLogs]);
+  }, [activeTabId, setEntries, setCursorEnd, fetchLogs]);
 
   // Refresh when offline mode changes
   useEffect(() => {
