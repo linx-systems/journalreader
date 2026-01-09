@@ -31,9 +31,32 @@ export function LogViewer() {
   const [exportNotification, setExportNotification] = useState<LogExportResult | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
+  // Refs for timeout cleanup to prevent memory leaks
+  const exportNotificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollToLatestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup all timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (exportNotificationTimeoutRef.current) {
+        clearTimeout(exportNotificationTimeoutRef.current);
+      }
+      if (scrollToLatestTimeoutRef.current) {
+        clearTimeout(scrollToLatestTimeoutRef.current);
+      }
+      if (scrollSyncTimeoutRef.current) {
+        clearTimeout(scrollSyncTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleExportComplete = useCallback((result: LogExportResult) => {
     setExportNotification(result);
-    setTimeout(() => setExportNotification(null), 3000);
+    if (exportNotificationTimeoutRef.current) {
+      clearTimeout(exportNotificationTimeoutRef.current);
+    }
+    exportNotificationTimeoutRef.current = setTimeout(() => setExportNotification(null), 3000);
   }, []);
 
   // Consolidated state ref for scroll/anchor management
@@ -197,7 +220,10 @@ export function LogViewer() {
     } else {
       parentRef.current.scrollTo({ top: parentRef.current.scrollHeight, behavior: 'smooth' });
     }
-    setTimeout(() => {
+    if (scrollToLatestTimeoutRef.current) {
+      clearTimeout(scrollToLatestTimeoutRef.current);
+    }
+    scrollToLatestTimeoutRef.current = setTimeout(() => {
       viewerState.current.isScrolling = false;
     }, 500);
   }, [filter.reverse]);
@@ -380,7 +406,10 @@ export function LogViewer() {
       rowVirtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'smooth' });
 
       // Reset sync scrolling flag after animation
-      setTimeout(() => {
+      if (scrollSyncTimeoutRef.current) {
+        clearTimeout(scrollSyncTimeoutRef.current);
+      }
+      scrollSyncTimeoutRef.current = setTimeout(() => {
         isSyncScrolling.current = false;
       }, 500);
     }

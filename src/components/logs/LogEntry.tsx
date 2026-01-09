@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useState, useRef, useEffect } from 'react';
 import type { JournalEntry } from '../../lib/types';
 import { PRIORITY_LABELS } from '../../lib/types';
 import { formatDistanceToNow } from 'date-fns';
@@ -49,6 +49,16 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
   const [copied, setCopied] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const { filter, setFilter } = useFilterStore();
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timeout on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const timestamp = new Date(entry.realtimeTimestamp / 1000);
   const relativeTime = formatDistanceToNow(timestamp, { addSuffix: true });
@@ -57,7 +67,10 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
   const handleCopy = async () => {
     await navigator.clipboard.writeText(entry.message);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyTimeoutRef.current) {
+      clearTimeout(copyTimeoutRef.current);
+    }
+    copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
   };
 
   const handleCopyJson = async () => {
