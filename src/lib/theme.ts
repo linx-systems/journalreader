@@ -409,44 +409,16 @@ export function createCustomTheme(base: Theme, overrides: ThemeOverrides): Theme
 }
 
 export function validateTheme(theme: unknown): theme is Theme {
-  if (!theme || typeof theme !== 'object') return false;
-  const t = theme as Record<string, unknown>;
+  if (!isObject(theme)) return false;
 
-  if (typeof t.id !== 'string' || !t.id) return false;
-  if (typeof t.name !== 'string' || !t.name) return false;
-  if (typeof t.isDark !== 'boolean') return false;
+  // Validate top-level string and boolean fields
+  if (typeof theme.id !== 'string' || !theme.id) return false;
+  if (typeof theme.name !== 'string' || !theme.name) return false;
+  if (typeof theme.isDark !== 'boolean') return false;
 
-  if (!t.colors || typeof t.colors !== 'object') return false;
-  const colors = t.colors as Record<string, unknown>;
-
-  const requiredColorFields = [
-    'background', 'backgroundSecondary', 'foreground', 'foregroundSecondary',
-    'accent', 'accentHover', 'selection', 'border'
-  ];
-
-  for (const field of requiredColorFields) {
-    if (typeof colors[field] !== 'string') return false;
-  }
-
-  if (!colors.priority || typeof colors.priority !== 'object') return false;
-  if (!colors.priorityBg || typeof colors.priorityBg !== 'object') return false;
-
-  const priorityFields = ['emergency', 'alert', 'critical', 'error', 'warning', 'notice', 'info', 'debug'];
-  const priority = colors.priority as Record<string, unknown>;
-  const priorityBg = colors.priorityBg as Record<string, unknown>;
-
-  for (const field of priorityFields) {
-    if (typeof priority[field] !== 'string') return false;
-    if (typeof priorityBg[field] !== 'string') return false;
-  }
-
-  if (!t.typography || typeof t.typography !== 'object') return false;
-  const typography = t.typography as Record<string, unknown>;
-
-  if (typeof typography.fontFamily !== 'string') return false;
-  if (typeof typography.fontSize !== 'number') return false;
-  if (typeof typography.lineHeight !== 'number') return false;
-  if (typeof typography.monospace !== 'boolean') return false;
+  // Validate nested structures using type guards
+  if (!isThemeColors(theme.colors)) return false;
+  if (!isThemeTypography(theme.typography)) return false;
 
   return true;
 }
@@ -474,6 +446,58 @@ export function importTheme(json: string): Theme | null {
 
 export const PRIORITY_KEYS = ['emergency', 'alert', 'critical', 'error', 'warning', 'notice', 'info', 'debug'] as const;
 export type PriorityKey = typeof PRIORITY_KEYS[number];
+
+// Type guard helper for checking if a value is a non-null object
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Type guard for priority colors (both priority and priorityBg have the same shape)
+function isPriorityColors(value: unknown): value is ThemeColors['priority'] {
+  if (!isObject(value)) return false;
+
+  for (const key of PRIORITY_KEYS) {
+    if (typeof value[key] !== 'string') return false;
+  }
+  return true;
+}
+
+// Type guard for ThemeColors interface
+function isThemeColors(value: unknown): value is ThemeColors {
+  if (!isObject(value)) return false;
+
+  const requiredStringFields = [
+    'background',
+    'backgroundSecondary',
+    'foreground',
+    'foregroundSecondary',
+    'accent',
+    'accentHover',
+    'selection',
+    'border',
+  ] as const;
+
+  for (const field of requiredStringFields) {
+    if (typeof value[field] !== 'string') return false;
+  }
+
+  if (!isPriorityColors(value.priority)) return false;
+  if (!isPriorityColors(value.priorityBg)) return false;
+
+  return true;
+}
+
+// Type guard for ThemeTypography interface
+function isThemeTypography(value: unknown): value is ThemeTypography {
+  if (!isObject(value)) return false;
+
+  return (
+    typeof value.fontFamily === 'string' &&
+    typeof value.fontSize === 'number' &&
+    typeof value.lineHeight === 'number' &&
+    typeof value.monospace === 'boolean'
+  );
+}
 
 export function getPriorityKey(priority: number): PriorityKey {
   const mapping: Record<number, PriorityKey> = {
