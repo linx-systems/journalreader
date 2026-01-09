@@ -281,18 +281,23 @@ export const useOfflineStore = create<OfflineStore>()(
         getItem: (name) => {
           const str = localStorage.getItem(name);
           if (!str) return null;
-          const parsed = JSON.parse(str);
-          // Migrate old settings format to new format
-          if (parsed?.state?.settings) {
-            const settings = parsed.state.settings;
-            // If old format (has retentionDays but no syncBoots), migrate
-            if (settings.retentionDays !== undefined && settings.syncBoots === undefined) {
-              settings.syncBoots = DEFAULT_OFFLINE_SETTINGS.syncBoots;
-              delete settings.retentionDays;
-              delete settings.maxEntries;
+          try {
+            const parsed = JSON.parse(str);
+            // Migrate old settings format to new format
+            if (parsed?.state?.settings) {
+              const settings = parsed.state.settings;
+              // If old format (has retentionDays but no syncBoots), migrate
+              if (settings.retentionDays !== undefined && settings.syncBoots === undefined) {
+                settings.syncBoots = DEFAULT_OFFLINE_SETTINGS.syncBoots;
+                delete settings.retentionDays;
+                delete settings.maxEntries;
+              }
             }
+            return parsed;
+          } catch (e) {
+            console.error('Failed to parse stored offline state, using defaults:', e);
+            return null;
           }
-          return parsed;
         },
         setItem: (name, value) => {
           localStorage.setItem(name, JSON.stringify(value));
