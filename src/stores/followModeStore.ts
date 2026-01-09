@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import type { JournalEntry, FollowEvent, FollowErrorEvent } from '../lib/types';
+import type { JournalEntry, JournalFilter, FollowEvent, FollowErrorEvent } from '../lib/types';
 
 /**
  * Centralized store for follow mode state management.
@@ -23,14 +23,14 @@ interface FollowModeState {
   unlistenStopped: UnlistenFn | null;
 
   // Filter change handling
-  lastFilterKey: string | null;
+  lastFilter: JournalFilter | null;
   restartInProgress: boolean;
   debounceTimer: ReturnType<typeof setTimeout> | null;
 
   // Actions
   setListenersSetUp: (value: boolean) => void;
   setUnlistenFns: (entry: UnlistenFn | null, error: UnlistenFn | null, stopped: UnlistenFn | null) => void;
-  setLastFilterKey: (key: string | null) => void;
+  setLastFilter: (filter: JournalFilter | null) => void;
   setRestartInProgress: (value: boolean) => void;
   setDebounceTimer: (timer: ReturnType<typeof setTimeout> | null) => void;
   clearDebounceTimer: () => void;
@@ -43,7 +43,7 @@ export const useFollowModeStore = create<FollowModeState>((set, get) => ({
   unlistenEntry: null,
   unlistenError: null,
   unlistenStopped: null,
-  lastFilterKey: null,
+  lastFilter: null,
   restartInProgress: false,
   debounceTimer: null,
 
@@ -55,7 +55,7 @@ export const useFollowModeStore = create<FollowModeState>((set, get) => ({
     unlistenStopped: stopped,
   }),
 
-  setLastFilterKey: (key) => set({ lastFilterKey: key }),
+  setLastFilter: (filter) => set({ lastFilter: filter }),
 
   setRestartInProgress: (value) => set({ restartInProgress: value }),
 
@@ -101,14 +101,6 @@ export const useFollowModeStore = create<FollowModeState>((set, get) => ({
 
 // Constants
 export const DEBOUNCE_MS = 300;
-
-/**
- * Helper to create a stable key from filter for comparison.
- * Used to detect actual filter changes vs reference changes.
- */
-export function getFilterKey(filter: unknown): string {
-  return JSON.stringify(filter);
-}
 
 /**
  * Set up Tauri event listeners for follow mode.

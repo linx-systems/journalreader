@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useRef, useMemo } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useFilterStore } from '../stores/filterStore';
 import { useConnectionStore } from '../stores/connectionStore';
 import {
   useFollowModeStore,
   setupListeners,
   cleanupListeners,
-  getFilterKey,
   DEBOUNCE_MS,
 } from '../stores/followModeStore';
+import { filtersEqual } from '../lib/types';
 import {
   startFollow,
   stopFollow,
@@ -33,8 +33,8 @@ export function useFollowMode() {
 
   // Access store state and actions
   const {
-    lastFilterKey,
-    setLastFilterKey,
+    lastFilter,
+    setLastFilter,
     setRestartInProgress,
     clearDebounceTimer,
     setDebounceTimer,
@@ -140,19 +140,17 @@ export function useFollowMode() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Restart follow mode when filter changes (to apply new filters)
-  // Use JSON stringification to detect actual filter changes (not reference changes)
-  const filterKey = useMemo(() => getFilterKey(filter), [filter]);
-
+  // Use filtersEqual() for efficient comparison instead of JSON.stringify
   useEffect(() => {
     // Check if filter actually changed (using store state for singleton behavior)
-    if (lastFilterKey === filterKey) return;
+    if (filtersEqual(lastFilter, filter)) return;
 
-    // Update the filter key immediately to prevent duplicate handling
-    const previousKey = lastFilterKey;
-    setLastFilterKey(filterKey);
+    // Update the stored filter immediately to prevent duplicate handling
+    const hadPreviousFilter = lastFilter !== null;
+    setLastFilter(filter);
 
     // If following, debounce and restart with the new filter
-    if (isFollowing && previousKey !== null) {
+    if (isFollowing && hadPreviousFilter) {
       // Clear any pending debounce timer
       clearDebounceTimer();
 
@@ -209,10 +207,9 @@ export function useFollowMode() {
     };
   }, [
     filter,
-    filterKey,
     isFollowing,
-    lastFilterKey,
-    setLastFilterKey,
+    lastFilter,
+    setLastFilter,
     setRestartInProgress,
     clearDebounceTimer,
     setDebounceTimer,
