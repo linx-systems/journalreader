@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -16,11 +17,16 @@ interface TimelineHistogramProps {
 }
 
 export function TimelineHistogram({ data, onBarClick }: TimelineHistogramProps) {
-  const chartData = data.map((point) => ({
-    ...point,
-    time: format(new Date(point.timestamp), 'MMM d HH:mm'),
-    normal: point.count - point.errorCount - point.warningCount,
-  }));
+  // Memoize data transformation to avoid recalculation when other state changes
+  const chartData = useMemo(
+    () =>
+      data.map((point) => ({
+        ...point,
+        time: format(new Date(point.timestamp), 'MMM d HH:mm'),
+        normal: point.count - point.errorCount - point.warningCount,
+      })),
+    [data]
+  );
 
   return (
     <div className="h-full flex flex-col">

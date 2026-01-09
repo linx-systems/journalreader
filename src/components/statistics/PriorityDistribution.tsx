@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import type { PriorityCount } from '../../lib/types';
 import { PRIORITY_HEX_COLORS } from '../../lib/types';
@@ -8,15 +9,17 @@ interface PriorityDistributionProps {
 }
 
 export function PriorityDistribution({ data, onSliceClick }: PriorityDistributionProps) {
-  // Filter out zero counts and sort by count descending for better visualization
-  const filteredData = data.filter((d) => d.count > 0);
-
-  // Convert to format compatible with recharts
-  const chartData = filteredData.map((d) => ({
-    priority: d.priority,
-    label: d.label,
-    count: d.count,
-  }));
+  // Memoize data transformation to avoid recalculation when other state changes
+  const chartData = useMemo(() => {
+    // Filter out zero counts and convert to format compatible with recharts
+    return data
+      .filter((d) => d.count > 0)
+      .map((d) => ({
+        priority: d.priority,
+        label: d.label,
+        count: d.count,
+      }));
+  }, [data]);
 
   return (
     <div className="h-full flex flex-col">
