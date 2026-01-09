@@ -223,16 +223,11 @@ export function useFollowMode() {
 
         const restartFollow = async () => {
           try {
-            // First stop the current follow to ensure clean state
-            if (isRemoteRef.current) {
-              await stopRemoteFollow().catch(() => {});
-            } else {
-              await stopFollow().catch(() => {});
-            }
-
-            // Small delay to ensure the old connection is fully stopped
-            await new Promise(resolve => setTimeout(resolve, 100));
-
+            // Don't call stopFollow() - just call startFollow() directly.
+            // The backend's start() method sets a 'restarting' flag before stopping
+            // the old process, which suppresses the 'journal-follow-stopped' event.
+            // If we called stopFollow() first, it would clear that flag and emit
+            // the stopped event, causing the UI to show follow as disabled.
             if (isRemoteRef.current) {
               // Retrieve password from keyring for remote follow
               const hostId = connectedHostIdRef.current;
