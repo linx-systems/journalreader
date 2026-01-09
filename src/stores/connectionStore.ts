@@ -11,6 +11,9 @@ import {
   getConnectionState,
 } from '../lib/tauri';
 
+// Special constant for local machine tab
+export const LOCAL_TAB_ID = 'local';
+
 interface ConnectionStore {
   // Remote hosts
   hosts: RemoteHost[];
@@ -25,6 +28,10 @@ interface ConnectionStore {
   // Password for current session (not persisted)
   sessionPassword: string | null;
 
+  // Multi-host tab state
+  openTabs: string[];      // Host IDs ('local' | host.id)
+  activeTabId: string;     // Currently visible tab
+
   // Actions
   loadHosts: () => Promise<void>;
   addHost: (input: RemoteHostInput) => Promise<RemoteHost>;
@@ -35,6 +42,11 @@ interface ConnectionStore {
   refreshConnectionState: () => Promise<void>;
   setSessionPassword: (password: string | null) => void;
   getConnectedHost: () => RemoteHost | null;
+
+  // Tab actions
+  openTab: (hostId: string) => void;
+  closeTab: (hostId: string) => void;
+  setActiveTab: (hostId: string) => void;
 }
 
 export const useConnectionStore = create<ConnectionStore>()(
@@ -48,6 +60,10 @@ export const useConnectionStore = create<ConnectionStore>()(
       connectionStatus: 'disconnected',
       connectionError: null,
       sessionPassword: null,
+
+      // Tab state - always start with local tab open and active
+      openTabs: [LOCAL_TAB_ID],
+      activeTabId: LOCAL_TAB_ID,
 
       loadHosts: async () => {
         set({ isLoadingHosts: true, hostsError: null });
@@ -153,12 +169,61 @@ export const useConnectionStore = create<ConnectionStore>()(
         if (!connectedHostId) return null;
         return hosts.find((h) => h.id === connectedHostId) ?? null;
       },
+
+      // Tab management actions
+      openTab: (hostId: string) => {
+        set((state) => {
+          // Don't add duplicate tabs
+          if (state.openTabs.includes(hostId)) {
+            // Just switch to it
+            return { activeTabId: hostId };
+          }
+          return {
+            openTabs: [...state.openTabs, hostId],
+            activeTabId: hostId,
+          };
+        });
+      },
+
+      closeTab: (hostId: string) => {
+        set((state) => {
+          const newTabs = state.openTabs.filter((id) => id !== hostId);
+          // Always keep at least one tab (local)
+          if (newTabs.length === 0) {
+            return {
+              openTabs: [LOCAL_TAB_ID],
+              activeTabId: LOCAL_TAB_ID,
+            };
+          }
+          // If closing the active tab, switch to an adjacent tab
+          let newActiveTabId = state.activeTabId;
+          if (state.activeTabId === hostId) {
+            const closedIndex = state.openTabs.indexOf(hostId);
+            // Prefer the tab to the right, otherwise the left
+            newActiveTabId = newTabs[Math.min(closedIndex, newTabs.length - 1)];
+          }
+          return {
+            openTabs: newTabs,
+            activeTabId: newActiveTabId,
+          };
+        });
+      },
+
+      setActiveTab: (hostId: string) => {
+        const { openTabs } = get();
+        // Only set active if the tab is open
+        if (openTabs.includes(hostId)) {
+          set({ activeTabId: hostId });
+        }
+      },
     }),
     {
       name: 'journal-reader-connection',
       partialize: (state) => ({
-        // Only persist hosts list, not connection state
+        // Only persist hosts list and open tabs
         hosts: state.hosts,
+        openTabs: state.openTabs,
+        activeTabId: state.activeTabId,
       }),
     }
   )

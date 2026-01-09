@@ -15,8 +15,8 @@ import { useFilterStore } from '../../stores/filterStore';
 import { useStatisticsStore } from '../../stores/statisticsStore';
 import { useOfflineStore } from '../../stores/offlineStore';
 import { useOfflineSync } from '../../hooks/useOfflineSync';
-import { useConnectionStore } from '../../stores/connectionStore';
-import { HostSelector } from '../remote/HostSelector';
+import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
+import { TabBar } from '../hosts/TabBar';
 import { useEffect } from 'react';
 import clsx from 'clsx';
 
@@ -27,7 +27,10 @@ export function Toolbar() {
   const { viewMode, setViewMode } = useStatisticsStore();
   const { isOfflineMode, setOfflineMode, triggerSync } = useOfflineStore();
   const { isSyncing } = useOfflineSync();
-  const { connectedHostId } = useConnectionStore();
+  const { connectedHostId, activeTabId } = useConnectionStore();
+
+  // Show offline controls when active tab is a remote host
+  const showOfflineControls = activeTabId !== LOCAL_TAB_ID;
 
   const toggleSortOrder = () => {
     setFilter({ reverse: !filter.reverse });
@@ -58,8 +61,8 @@ export function Toolbar() {
   return (
     <div className="flex items-center justify-between px-3 py-2 bg-theme border-b border-theme gap-2 min-w-0">
       <div className="flex items-center gap-2 min-w-0">
-        {/* Host Selector */}
-        <HostSelector />
+        {/* Host Tab Bar */}
+        <TabBar />
 
         {/* View Mode Toggle */}
         <div className="flex items-center border border-theme rounded-lg overflow-hidden shrink-0">
@@ -167,8 +170,8 @@ export function Toolbar() {
           <span className="hidden xl:inline">{filter.reverse ? 'Newest' : 'Oldest'}</span>
         </button>
 
-        {/* Offline controls - only show when connected to a remote host */}
-        {connectedHostId && (
+        {/* Offline controls - only show when active tab is a remote host */}
+        {showOfflineControls && connectedHostId && (
           <>
             {/* Divider */}
             <div className="h-6 w-px bg-theme-secondary/30" />
