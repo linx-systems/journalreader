@@ -34,6 +34,9 @@ interface SplitPanelStore {
   /** State for right/bottom panel */
   rightPanel: PanelState;
 
+  /** Refresh trigger - increment to signal panels should refresh */
+  refreshTrigger: number;
+
   // Left panel actions
   setLeftEntries: (entries: JournalEntry[]) => void;
   appendLeftEntries: (entries: JournalEntry[]) => void;
@@ -56,6 +59,9 @@ interface SplitPanelStore {
 
   /** Clear both panels (when exiting split view) */
   clearAllPanels: () => void;
+
+  /** Trigger a refresh of all panels */
+  triggerRefresh: () => void;
 }
 
 /**
@@ -79,6 +85,7 @@ function mergeEntries(
 export const useSplitPanelStore = create<SplitPanelStore>((set) => ({
   leftPanel: { ...defaultPanelState },
   rightPanel: { ...defaultPanelState },
+  refreshTrigger: 0,
 
   // Left panel actions
   setLeftEntries: (entries) => set((state) => ({
@@ -163,4 +170,9 @@ export const useSplitPanelStore = create<SplitPanelStore>((set) => ({
     leftPanel: { ...defaultPanelState },
     rightPanel: { ...defaultPanelState },
   }),
+
+  // Trigger refresh for all panels
+  triggerRefresh: () => set((state) => ({
+    refreshTrigger: state.refreshTrigger + 1,
+  })),
 }));

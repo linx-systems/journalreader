@@ -23,9 +23,10 @@ import { useOfflineSync } from '../../hooks/useOfflineSync';
 import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
 import { useScrollSyncStore } from '../../stores/scrollSyncStore';
 import { useLayoutStore } from '../../stores/layoutStore';
+import { useSplitPanelStore } from '../../stores/splitPanelStore';
 import { TabBar } from '../hosts/TabBar';
 import { LayoutSelector } from './LayoutSelector';
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import clsx from 'clsx';
 
 export function Toolbar() {
@@ -38,6 +39,15 @@ export function Toolbar() {
   const { activeTabId, openTabs } = useConnectionStore();
   const { syncEnabled, setSyncEnabled } = useScrollSyncStore();
   const { layout } = useLayoutStore();
+  const { triggerRefresh: triggerPanelRefresh } = useSplitPanelStore();
+
+  // Combined refresh that handles both regular and split view
+  const handleRefresh = useCallback(() => {
+    refresh(); // Refresh main LogViewer
+    if (layout !== 'single') {
+      triggerPanelRefresh(); // Also refresh split panels
+    }
+  }, [refresh, layout, triggerPanelRefresh]);
 
   // Show offline controls when active tab is a remote host
   const showOfflineControls = activeTabId !== LOCAL_TAB_ID;
@@ -153,7 +163,7 @@ export function Toolbar() {
         </button>
 
         <button
-          onClick={refresh}
+          onClick={handleRefresh}
           disabled={isLoading || isFollowing}
           className="flex items-center gap-1 px-2 py-1.5 text-sm font-medium
                      text-theme bg-theme border border-theme rounded-lg

@@ -2,7 +2,9 @@ import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { usePanelJournalLogs, type PanelPosition } from '../../hooks/usePanelJournalLogs';
 import { useFilterStore } from '../../stores/filterStore';
+import { useScrollSyncStore } from '../../stores/scrollSyncStore';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
+import { findEntryIndexByTimestamp, getVisibleTimestamp } from '../../lib/scrollSync';
 import { LogEntryRow } from './LogEntry';
 import { LogExport, type LogExportResult } from './LogExport';
 import { Loader2, AlertCircle, FileSearch } from 'lucide-react';
@@ -33,9 +35,15 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
     panelPosition,
   });
   const { filter } = useFilterStore();
+  const { syncEnabled, anchorTimestamp, sourceTabId, syncVersion, broadcastTimestamp } = useScrollSyncStore();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [exportNotification, setExportNotification] = useState<LogExportResult | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+
+  // Track last processed sync version to avoid duplicate scrolls
+  const lastProcessedSyncVersion = useRef(0);
+  // Track if we're currently syncing to avoid echo loops
+  const isSyncScrolling = useRef(false);
 
   const handleExportComplete = useCallback((result: LogExportResult) => {
     setExportNotification(result);
@@ -138,11 +146,47 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
     });
   }, []);
 
+  // Store scroll handler deps in refs to avoid recreating debounced function
+  const scrollDepsRef = useRef({
+    syncEnabled,
+    isNewestFirst: filter.reverse !== false,
+  });
+  scrollDepsRef.current = {
+    syncEnabled,
+    isNewestFirst: filter.reverse !== false,
+  };
+
   const handleScroll = useMemo(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let syncTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     const scrollHandler = () => {
-      // No-op for now - simplified panel viewer doesn't need complex scroll logic
+      if (!parentRef.current) return;
+
+      const { syncEnabled } = scrollDepsRef.current;
+
+      // Broadcast timestamp for scroll sync (debounced separately, 150ms)
+      // Skip if we're currently scrolling due to a sync event from another panel
+      if (syncEnabled && !isSyncScrolling.current) {
+        if (syncTimeoutId) {
+          clearTimeout(syncTimeoutId);
+        }
+        syncTimeoutId = setTimeout(() => {
+          const virtualItems = rowVirtualizer.getVirtualItems();
+          if (virtualItems.length > 0 && entriesRef.current.length > 0) {
+            const timestamp = getVisibleTimestamp(
+              entriesRef.current,
+              virtualItems[0].index,
+              virtualItems[virtualItems.length - 1].index,
+              0.3 // Upper third of viewport
+            );
+            if (timestamp !== null) {
+              broadcastTimestamp(timestamp, hostId);
+            }
+          }
+          syncTimeoutId = null;
+        }, 150);
+      }
     };
 
     return () => {
@@ -152,13 +196,57 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
         scrollHandler();
       }, 16);
     };
-  }, []);
+  }, [broadcastTimestamp, hostId, rowVirtualizer]);
 
   // Clear expanded rows when hostId changes
   useEffect(() => {
     setExpandedRows(new Set());
     setSelectedIndex(null);
   }, [hostId]);
+
+  // Track which host we last synced for, to handle host switches
+  const lastSyncedHostId = useRef<string | null>(null);
+
+  // Handle scroll sync from other panels
+  // When anchorTimestamp changes from another panel, scroll to that timestamp
+  useEffect(() => {
+    // Skip if sync is disabled or no anchor timestamp
+    if (!syncEnabled || anchorTimestamp === null) return;
+
+    // Skip if this panel is the source of the sync
+    if (sourceTabId === hostId) return;
+
+    // Skip if entries not loaded yet
+    if (entries.length === 0) return;
+
+    // Check if we need to sync:
+    // 1. New sync version we haven't processed
+    // 2. OR we switched hosts and haven't synced this host yet
+    const isNewSync = syncVersion > lastProcessedSyncVersion.current;
+    const isHostSwitch = lastSyncedHostId.current !== hostId;
+
+    if (!isNewSync && !isHostSwitch) return;
+
+    lastProcessedSyncVersion.current = syncVersion;
+    lastSyncedHostId.current = hostId;
+
+    // Find the closest entry to the anchor timestamp
+    const isNewestFirst = filter.reverse !== false;
+    const targetIndex = findEntryIndexByTimestamp(entries, anchorTimestamp, isNewestFirst);
+
+    if (targetIndex >= 0) {
+      // Mark that we're doing a sync scroll to avoid echo
+      isSyncScrolling.current = true;
+
+      // Scroll to the target index
+      rowVirtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'smooth' });
+
+      // Reset sync scrolling flag after animation
+      setTimeout(() => {
+        isSyncScrolling.current = false;
+      }, 500);
+    }
+  }, [syncEnabled, anchorTimestamp, sourceTabId, hostId, syncVersion, entries, filter.reverse, rowVirtualizer]);
 
   if (error) {
     return (

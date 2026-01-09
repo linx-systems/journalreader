@@ -50,6 +50,9 @@ export function usePanelJournalLogs({ hostId, panelPosition }: UsePanelJournalLo
     panelPosition === 'left' ? state.leftPanel : state.rightPanel
   );
 
+  // Get refresh trigger to respond to toolbar refresh
+  const refreshTrigger = useSplitPanelStore((state) => state.refreshTrigger);
+
   // Get panel-specific actions
   const {
     setLeftEntries, appendLeftEntries, setLeftLoading, setLeftError, setLeftHasMore, setLeftCursorEnd,
@@ -115,11 +118,14 @@ export function usePanelJournalLogs({ hostId, panelPosition }: UsePanelJournalLo
 
       let result;
       if (currentIsOffline) {
-        // Query offline storage when in offline mode or not connected to host
+        // Explicit offline mode - query offline storage
         result = await queryOfflineJournal(currentHostId, filterToUse);
       } else if (currentIsRemote && currentIsConnectedToHost) {
-        // Query remote host when connected
+        // Query remote host when connected to this specific host
         result = await queryRemoteJournal(filterToUse);
+      } else if (currentIsRemote) {
+        // Remote host but not connected to it - query offline storage
+        result = await queryOfflineJournal(currentHostId, filterToUse);
       } else {
         // Query local journal
         result = await queryJournal(filterToUse);
@@ -227,6 +233,19 @@ export function usePanelJournalLogs({ hostId, panelPosition }: UsePanelJournalLo
       }
     };
   }, [filter, fetchLogs]);
+
+  // Track refresh trigger to respond to toolbar refresh button
+  const prevRefreshTriggerRef = useRef(refreshTrigger);
+
+  // Respond to external refresh trigger (from toolbar)
+  useEffect(() => {
+    // Skip initial render
+    if (prevRefreshTriggerRef.current === refreshTrigger) {
+      return;
+    }
+    prevRefreshTriggerRef.current = refreshTrigger;
+    fetchLogs(false);
+  }, [refreshTrigger, fetchLogs]);
 
   return {
     entries,
