@@ -3,30 +3,20 @@ import { useFilterStore } from '../stores/filterStore';
 import { useConnectionStore, LOCAL_TAB_ID } from '../stores/connectionStore';
 import { useOfflineStore } from '../stores/offlineStore';
 import { useScrollSyncStore } from '../stores/scrollSyncStore';
-import { queryJournal, queryRemoteJournal } from '../lib/tauri';
-import { queryOfflineJournal } from '../lib/offlineTauri';
-import { filtersEqual } from '../lib/types';
-import { SCROLL_SYNC_OFFSET_MS, DEBOUNCE_MS } from '../lib/constants';
+import { useJournalFetch, type JournalRefs } from './useJournalFetch';
+import { useFilterDebounce } from './useFilterDebounce';
+import { useTabSync } from './useTabSync';
 
 /**
- * Check if an error is a connection-related error that should trigger offline fallback.
+ * Main hook for fetching journal logs in the primary view.
+ *
+ * This hook composes several smaller, focused hooks:
+ * - useJournalFetch: Core fetching logic with offline fallback
+ * - useFilterDebounce: Debounced filter change handling
+ * - useTabSync: Tab switching synchronization with scroll sync
+ *
+ * @returns Journal entries, loading state, error state, and control functions
  */
-function isConnectionError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const message = err.message.toLowerCase();
-  return (
-    message.includes('connection') ||
-    message.includes('network') ||
-    message.includes('timeout') ||
-    message.includes('econnrefused') ||
-    message.includes('enotfound') ||
-    message.includes('unreachable') ||
-    message.includes('offline') ||
-    message.includes('ssh') ||
-    message.includes('failed to connect')
-  );
-}
-
 export function useJournalLogs() {
   const {
     filter,
@@ -48,234 +38,101 @@ export function useJournalLogs() {
   const { isOfflineMode, setOfflineMode } = useOfflineStore();
   const { syncEnabled, anchorTimestamp } = useScrollSyncStore();
 
-  // Determine if the active tab is a remote host
+  // Compute data source state
   const isActiveTabRemote = activeTabId !== LOCAL_TAB_ID;
-  // Determine if we're connected to the active remote host
   const isConnectedToActiveTab = isActiveTabRemote && connectedHostId === activeTabId && connectionStatus === 'connected';
-  // Determine if we're effectively offline - only applies when viewing a remote host tab
-  // Local logs are always available directly, they don't need offline mode
   const isEffectivelyOffline = isActiveTabRemote && (isOfflineMode || !isConnectedToActiveTab);
 
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Use refs to access current values without causing effect re-runs
-  const filterRef = useRef(filter);
-  const cursorEndRef = useRef(cursorEnd);
-  const isConnectedToActiveTabRef = useRef(isConnectedToActiveTab);
-  const isEffectivelyOfflineRef = useRef(isEffectivelyOffline);
-  const activeTabIdRef = useRef(activeTabId);
-  const isActiveTabRemoteRef = useRef(isActiveTabRemote);
-  filterRef.current = filter;
-  cursorEndRef.current = cursorEnd;
-  isConnectedToActiveTabRef.current = isConnectedToActiveTab;
-  isEffectivelyOfflineRef.current = isEffectivelyOffline;
-  activeTabIdRef.current = activeTabId;
-  isActiveTabRemoteRef.current = isActiveTabRemote;
-
-  // Track sync-adjusted filter for tab switches (declared before fetchLogs so it can be used)
+  // Track sync-adjusted filter for tab switches
   const syncAdjustedFilterRef = useRef<{ since?: string } | null>(null);
 
-  const fetchLogs = useCallback(async (append = false) => {
-    // Cancel any pending request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = new AbortController();
+  // Refs for accessing current values without triggering effect re-runs
+  const refsRef = useRef<JournalRefs>({
+    filter,
+    cursorEnd,
+    dataSource: {
+      hostId: activeTabId,
+      isRemote: isActiveTabRemote,
+      isConnected: isConnectedToActiveTab,
+      isOffline: isEffectivelyOffline,
+    },
+    syncAdjustedFilter: syncAdjustedFilterRef.current,
+  });
 
-    setLoading(true);
-    setError(null);
+  // Keep refs up to date
+  refsRef.current = {
+    filter,
+    cursorEnd,
+    dataSource: {
+      hostId: activeTabId,
+      isRemote: isActiveTabRemote,
+      isConnected: isConnectedToActiveTab,
+      isOffline: isEffectivelyOffline,
+    },
+    syncAdjustedFilter: syncAdjustedFilterRef.current,
+  };
 
-    try {
-      const currentFilter = filterRef.current;
-      const currentCursorEnd = cursorEndRef.current;
-      const currentIsOffline = isEffectivelyOfflineRef.current;
-      const currentActiveTabId = activeTabIdRef.current;
-      const currentIsActiveTabRemote = isActiveTabRemoteRef.current;
-      const currentIsConnectedToActiveTab = isConnectedToActiveTabRef.current;
+  // Core fetch logic
+  const { fetchLogs, loadMore: fetchLoadMore, refresh } = useJournalFetch({
+    actions: {
+      setEntries,
+      appendEntries,
+      setLoading,
+      setError,
+      setHasMore,
+      setCursorEnd,
+      setOfflineMode,
+    },
+    refs: refsRef,
+    onSyncFilterUsed: useCallback(() => {
+      syncAdjustedFilterRef.current = null;
+    }, []),
+  });
 
-      // Apply sync-adjusted filter if available (for tab switches with scroll sync)
-      let baseFilter = currentFilter;
-      if (syncAdjustedFilterRef.current && !append) {
-        baseFilter = { ...currentFilter, ...syncAdjustedFilterRef.current };
-        // Clear after use - only applies to the first fetch after tab switch
-        syncAdjustedFilterRef.current = null;
-      }
-
-      const filterToUse = append && currentCursorEnd
-        ? { ...baseFilter, afterCursor: currentCursorEnd }
-        : baseFilter;
-
-      let result;
-      if (currentIsOffline) {
-        // Query offline storage when in offline mode or not connected to active remote tab
-        result = await queryOfflineJournal(currentActiveTabId, filterToUse);
-      } else if (currentIsActiveTabRemote && currentIsConnectedToActiveTab) {
-        // Query remote host when connected to the active tab's host
-        result = await queryRemoteJournal(filterToUse);
-      } else {
-        // Query local journal when viewing local tab
-        result = await queryJournal(filterToUse);
-      }
-
-      if (append) {
-        appendEntries(result.entries);
-      } else {
-        setEntries(result.entries);
-      }
-
-      setHasMore(result.hasMore);
-      setCursorEnd(result.cursorEnd ?? null);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-
-      // Auto-fallback: if remote query fails with connection error, switch to offline mode
-      const currentIsOffline = isEffectivelyOfflineRef.current;
-      const currentActiveTabId = activeTabIdRef.current;
-      if (!currentIsOffline && isConnectionError(err)) {
-        try {
-          await setOfflineMode(true);
-          const currentFilter = filterRef.current;
-          const currentCursorEnd = cursorEndRef.current;
-          const filterToUse = append && currentCursorEnd
-            ? { ...currentFilter, afterCursor: currentCursorEnd }
-            : currentFilter;
-          const result = await queryOfflineJournal(currentActiveTabId, filterToUse);
-
-          if (append) {
-            appendEntries(result.entries);
-          } else {
-            setEntries(result.entries);
-          }
-
-          setHasMore(result.hasMore);
-          setCursorEnd(result.cursorEnd ?? null);
-          return; // Success after fallback
-        } catch (fallbackErr) {
-          // Fallback also failed, report original error
-          setError(errorMessage);
-        }
-      } else {
-        setError(errorMessage);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [setEntries, appendEntries, setLoading, setError, setHasMore, setCursorEnd, setOfflineMode]);
-
+  // Guarded loadMore that checks state
   const loadMore = useCallback(() => {
     if (!isLoading && hasMore) {
-      fetchLogs(true);
+      fetchLoadMore();
     }
-  }, [isLoading, hasMore, fetchLogs]);
+  }, [isLoading, hasMore, fetchLoadMore]);
 
-  const refresh = useCallback(() => {
+  // Handle tab switching with scroll sync
+  const handleClearEntries = useCallback(() => {
+    setEntries([]);
+    setCursorEnd(null);
+  }, [setEntries, setCursorEnd]);
+
+  const handleTabFetch = useCallback((syncAdjustedSince: string | null) => {
+    syncAdjustedFilterRef.current = syncAdjustedSince ? { since: syncAdjustedSince } : null;
     fetchLogs(false);
   }, [fetchLogs]);
 
-  // Cleanup AbortController on unmount to prevent state updates on unmounted component
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
-  }, []);
+  useTabSync({
+    activeTabId,
+    syncEnabled,
+    anchorTimestamp,
+    onClearEntries: handleClearEntries,
+    onFetch: handleTabFetch,
+  });
 
-  // Track if we were previously in follow mode
-  const wasFollowingRef = useRef(isFollowing);
-  // Track the filter for comparison (to detect actual filter changes)
-  // Initialize to null so the first render triggers an initial fetch
-  const prevFilterRef = useRef<typeof filter | null>(null);
-  // Track active tab to refresh when it changes
-  const prevActiveTabIdRef = useRef(activeTabId);
-  // Track offline mode to refresh when it changes
+  // Handle offline mode changes
   const prevIsOfflineModeRef = useRef(isOfflineMode);
-
-  // Refresh when active tab changes - this is the primary trigger for tab switching
-  useEffect(() => {
-    if (prevActiveTabIdRef.current !== activeTabId) {
-      prevActiveTabIdRef.current = activeTabId;
-      // Clear entries and fetch fresh data from the new tab's source
-      setEntries([]);
-      setCursorEnd(null);
-
-      // If scroll sync is enabled and we have an anchor timestamp,
-      // adjust the filter to ensure we load entries around that timestamp
-      if (syncEnabled && anchorTimestamp !== null) {
-        // Convert microseconds to Date, then to ISO string for the 'since' filter
-        // Go back a bit from the anchor to ensure we have context
-        const anchorDate = new Date(anchorTimestamp / 1000);
-        // Load entries from before the anchor timestamp
-        const sinceDate = new Date(anchorDate.getTime() - SCROLL_SYNC_OFFSET_MS);
-        const sinceIso = sinceDate.toISOString();
-
-        // Store the sync-adjusted since so fetchLogs can use it
-        syncAdjustedFilterRef.current = { since: sinceIso };
-      } else {
-        syncAdjustedFilterRef.current = null;
-      }
-
-      fetchLogs(false);
-    }
-  }, [activeTabId, setEntries, setCursorEnd, fetchLogs, syncEnabled, anchorTimestamp]);
-
-  // Refresh when offline mode changes
   useEffect(() => {
     if (prevIsOfflineModeRef.current !== isOfflineMode) {
       prevIsOfflineModeRef.current = isOfflineMode;
-      // Clear entries and fetch fresh data from the appropriate source
       setEntries([]);
       setCursorEnd(null);
       fetchLogs(false);
     }
   }, [isOfflineMode, setEntries, setCursorEnd, fetchLogs]);
 
-  // Debounced fetch when filter changes (skip if in follow mode)
-  useEffect(() => {
-    // If we just exited follow mode, fetch immediately
-    if (wasFollowingRef.current && !isFollowing) {
-      wasFollowingRef.current = false;
-      prevFilterRef.current = filter;
-      fetchLogs(false);
-      return;
-    }
-    wasFollowingRef.current = isFollowing;
-
-    // Don't fetch when in follow mode - the follow mode handles its own data
-    if (isFollowing) {
-      return;
-    }
-
-    // Check if this is the initial load (prevFilterRef is null)
-    const isInitialLoad = prevFilterRef.current === null;
-
-    // Only fetch if filter actually changed (not just reference)
-    // Uses efficient shallow comparison instead of O(n) JSON.stringify
-    if (filtersEqual(prevFilterRef.current, filter) && !isInitialLoad) {
-      return;
-    }
-    prevFilterRef.current = filter;
-
-    // On initial load, fetch immediately without debounce
-    if (isInitialLoad) {
-      fetchLogs(false);
-      return;
-    }
-
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = setTimeout(() => {
-      fetchLogs(false);
-    }, DEBOUNCE_MS);
-
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
-    };
-  }, [filter, isFollowing, fetchLogs]);
+  // Handle filter changes with debouncing
+  useFilterDebounce({
+    filter,
+    isPaused: isFollowing,
+    onFilterChange: useCallback(() => fetchLogs(false), [fetchLogs]),
+    onResume: useCallback(() => fetchLogs(false), [fetchLogs]),
+  });
 
   return {
     entries,
