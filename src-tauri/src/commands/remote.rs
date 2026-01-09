@@ -6,6 +6,7 @@ use crate::journal::{
     SharedKnownHostsStorage, SharedOfflineDatabase, StatisticsRequest, StoredHostKey, SystemUnit,
     TestConnectionResult,
 };
+use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
 
@@ -15,8 +16,9 @@ pub struct HostStorageState(pub SharedHostStorage);
 /// Global state for the SSH connection manager
 pub struct ConnectionManagerState(pub SharedConnectionManager);
 
-/// Global state for the remote journal follower
-pub struct RemoteFollowerState(pub Mutex<RemoteJournalFollower>);
+/// Global state for remote journal followers (one per host)
+/// This allows multiple hosts to be followed simultaneously
+pub struct RemoteFollowersState(pub Mutex<HashMap<String, RemoteJournalFollower>>);
 
 /// Global state for known SSH hosts
 pub struct KnownHostsStorageState(pub SharedKnownHostsStorage);
@@ -484,16 +486,44 @@ pub async fn get_remote_statistics(
 // Remote Follow Mode Commands
 // ============================================================================
 
+/// Start following a remote journal for a specific host
+///
+/// If host_id is not provided, uses the currently connected host for backwards compatibility.
+/// When host_id is provided, it starts a follower for that specific host, allowing
+/// multiple hosts to be followed simultaneously.
 #[tauri::command]
 pub fn start_remote_follow(
+    host_id: Option<String>,
     filter: JournalFilter,
     password: Option<String>,
+    host_state: State<'_, HostStorageState>,
     conn_state: State<'_, ConnectionManagerState>,
-    follower_state: State<'_, RemoteFollowerState>,
+    followers_state: State<'_, RemoteFollowersState>,
     app_handle: AppHandle,
 ) -> Result<(), JournalError> {
-    // Get the currently connected host and known_hosts storage
-    let (host, known_hosts) = {
+    // Determine which host to follow
+    let (host, known_hosts) = if let Some(ref id) = host_id {
+        // Use the specified host_id - look it up from storage
+        let host = {
+            let storage = host_state
+                .0
+                .lock()
+                .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
+            storage
+                .get(id)
+                .cloned()
+                .ok_or_else(|| JournalError::HostNotFound(id.clone()))?
+        };
+        let known_hosts = {
+            let manager = conn_state
+                .0
+                .lock()
+                .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
+            manager.known_hosts().clone()
+        };
+        (host, known_hosts)
+    } else {
+        // Backwards compatibility: use the currently connected host
         let manager = conn_state
             .0
             .lock()
@@ -505,34 +535,88 @@ pub fn start_remote_follow(
         (host, manager.known_hosts().clone())
     };
 
-    let mut follower = follower_state
+    let host_id_key = host.id.clone();
+
+    let mut followers = followers_state
         .0
         .lock()
         .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
+
+    // Get or create the follower for this host
+    let follower = followers
+        .entry(host_id_key)
+        .or_insert_with(RemoteJournalFollower::new);
+
     follower.start(&host, password, &filter, known_hosts, app_handle)
 }
 
+/// Stop following a remote journal for a specific host
+///
+/// If host_id is not provided, stops all remote followers for backwards compatibility.
+/// When host_id is provided, only stops the follower for that specific host.
 #[tauri::command]
 pub fn stop_remote_follow(
-    state: State<'_, RemoteFollowerState>,
+    host_id: Option<String>,
+    state: State<'_, RemoteFollowersState>,
 ) -> Result<(), JournalError> {
-    let mut follower = state
+    let mut followers = state
         .0
         .lock()
         .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-    follower.stop();
+
+    if let Some(id) = host_id {
+        // Stop specific host's follower
+        if let Some(follower) = followers.get_mut(&id) {
+            follower.stop();
+        }
+    } else {
+        // Backwards compatibility: stop all followers
+        for follower in followers.values_mut() {
+            follower.stop();
+        }
+    }
+
     Ok(())
 }
 
+/// Check if a specific host is being followed
+///
+/// If host_id is not provided, returns true if any host is being followed.
+/// When host_id is provided, returns true only if that specific host is being followed.
 #[tauri::command]
 pub fn is_remote_following(
-    state: State<'_, RemoteFollowerState>,
+    host_id: Option<String>,
+    state: State<'_, RemoteFollowersState>,
 ) -> Result<bool, JournalError> {
-    let follower = state
+    let followers = state
         .0
         .lock()
         .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-    Ok(follower.is_running())
+
+    if let Some(id) = host_id {
+        // Check specific host
+        Ok(followers.get(&id).is_some_and(|f| f.is_running()))
+    } else {
+        // Backwards compatibility: check if any follower is running
+        Ok(followers.values().any(|f| f.is_running()))
+    }
+}
+
+/// Get list of host IDs that are currently being followed
+#[tauri::command]
+pub fn get_following_hosts(
+    state: State<'_, RemoteFollowersState>,
+) -> Result<Vec<String>, JournalError> {
+    let followers = state
+        .0
+        .lock()
+        .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
+
+    Ok(followers
+        .iter()
+        .filter(|(_, f)| f.is_running())
+        .map(|(id, _)| id.clone())
+        .collect())
 }
 
 // ============================================================================

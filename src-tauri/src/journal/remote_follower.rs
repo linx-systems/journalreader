@@ -13,17 +13,27 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
-/// Event payload for new journal entries in follow mode
+/// Event payload for new journal entries in follow mode (with host context)
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FollowEvent {
+    pub host_id: String,
     pub entries: Vec<JournalEntry>,
 }
 
-/// Event payload for follow mode errors
+/// Event payload for follow mode errors (with host context)
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FollowErrorEvent {
+    pub host_id: String,
     pub message: String,
+}
+
+/// Event payload for follow mode stopped (with host context)
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FollowStoppedEvent {
+    pub host_id: String,
 }
 
 /// Remote journal follower that streams logs over SSH
@@ -41,6 +51,9 @@ impl RemoteJournalFollower {
     }
 
     /// Start following the remote journal with the given filter
+    ///
+    /// The host_id parameter is used to tag events so the frontend can identify
+    /// which host the entries are coming from when multiple hosts are being followed.
     pub fn start(
         &mut self,
         host: &RemoteHost,
@@ -61,6 +74,7 @@ impl RemoteJournalFollower {
         }
 
         // Clone data for the thread
+        let host_id = host.id.clone();
         let host = host.clone();
         let filter = filter.clone();
         let running = self.running.clone();
@@ -71,12 +85,13 @@ impl RemoteJournalFollower {
 
         // Spawn a thread to handle the SSH connection and streaming
         std::thread::spawn(move || {
-            let result = Self::run_follow_loop(&host, password.as_deref(), &filter, &known_hosts, &running, &restarting, &app_handle);
+            let result = Self::run_follow_loop(&host, password.as_deref(), &filter, &known_hosts, &running, &restarting, &host_id, &app_handle);
 
             if let Err(e) = result {
                 let _ = app_handle.emit(
                     "journal-follow-error",
                     FollowErrorEvent {
+                        host_id: host_id.clone(),
                         message: e.to_string(),
                     },
                 );
@@ -84,7 +99,9 @@ impl RemoteJournalFollower {
 
             // Notify that follow mode has stopped
             if !restarting.load(Ordering::SeqCst) {
-                let _ = app_handle.emit("journal-follow-stopped", ());
+                let _ = app_handle.emit("journal-follow-stopped", FollowStoppedEvent {
+                    host_id: host_id.clone(),
+                });
             }
         });
 
@@ -98,6 +115,7 @@ impl RemoteJournalFollower {
         known_hosts: &SharedKnownHostsStorage,
         running: &Arc<AtomicBool>,
         _restarting: &Arc<AtomicBool>,
+        host_id: &str,
         app_handle: &AppHandle,
     ) -> Result<(), JournalError> {
         // Establish SSH connection
@@ -220,6 +238,7 @@ impl RemoteJournalFollower {
                                         let _ = app_handle.emit(
                                             "journal-follow-entry",
                                             FollowEvent {
+                                                host_id: host_id.to_string(),
                                                 entries: buffer.clone(),
                                             },
                                         );
@@ -240,6 +259,7 @@ impl RemoteJournalFollower {
                         let _ = app_handle.emit(
                             "journal-follow-entry",
                             FollowEvent {
+                                host_id: host_id.to_string(),
                                 entries: buffer.clone(),
                             },
                         );
@@ -256,7 +276,10 @@ impl RemoteJournalFollower {
 
         // Emit any remaining buffered entries
         if !buffer.is_empty() {
-            let _ = app_handle.emit("journal-follow-entry", FollowEvent { entries: buffer });
+            let _ = app_handle.emit("journal-follow-entry", FollowEvent {
+                host_id: host_id.to_string(),
+                entries: buffer,
+            });
         }
 
         // Close the channel
