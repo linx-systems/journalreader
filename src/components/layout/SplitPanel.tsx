@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { Monitor, Server, X, ArrowLeftRight } from 'lucide-react';
-import { LogViewer } from '../logs/LogViewer';
+import { PanelLogViewer } from '../logs/PanelLogViewer';
 import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
 import clsx from 'clsx';
+import type { PanelPosition } from '../../hooks/usePanelJournalLogs';
 
 interface SplitPanelProps {
   /** Host ID for this panel ('local' or remote host id) */
@@ -40,6 +41,9 @@ export function SplitPanel({
     : connectedHostId === hostId;
 
   const isActive = activeTabId === hostId;
+
+  // Map position to panel position for the store (left/top -> 'left', right/bottom -> 'right')
+  const panelPosition: PanelPosition = position === 'left' || position === 'top' ? 'left' : 'right';
 
   const label = isLocal ? 'Local' : (host?.name || 'Unknown Host');
   const subtitle = isLocal
@@ -136,7 +140,10 @@ export function SplitPanel({
 
       {/* Log viewer for this host */}
       <div className="flex-1 min-h-0">
-        <LogViewer />
+        <PanelLogViewer
+          hostId={hostId}
+          panelPosition={panelPosition}
+        />
       </div>
     </div>
   );
