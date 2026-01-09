@@ -18,18 +18,19 @@ use commands::sync::{
 use commands::remote::{
     accept_host_key, add_remote_host, connect_to_host, connect_to_host_accept_key,
     delete_host_password, delete_remote_host, disconnect_from_host, fetch_host_key,
-    get_connection_state, get_host_key_info, get_host_password, get_remote_host,
+    get_connection_state, get_following_hosts, get_host_key_info, get_host_password, get_remote_host,
     get_remote_log_count, get_remote_statistics, is_keyring_available, is_remote_following,
     list_remote_boots, list_remote_hosts, list_remote_units, query_remote_journal, remove_host_key,
     save_host_password, start_remote_follow, stop_remote_follow, test_current_connection,
     test_host_connection, update_remote_host, ConnectionManagerState, HostStorageState,
-    KnownHostsStorageState, OfflineDatabaseState, RemoteFollowerState,
+    KnownHostsStorageState, OfflineDatabaseState, RemoteFollowersState,
 };
 use journal::{
     check_file_permissions, get_app_config_dir, new_shared_connection_manager,
     new_shared_host_storage, new_shared_known_hosts_storage, new_shared_offline_database,
     JournalFollower, RemoteJournalFollower,
 };
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -69,7 +70,7 @@ pub fn run() {
         .manage(ConnectionManagerState(new_shared_connection_manager(
             known_hosts,
         )))
-        .manage(RemoteFollowerState(Mutex::new(RemoteJournalFollower::new())))
+        .manage(RemoteFollowersState(Mutex::new(HashMap::<String, RemoteJournalFollower>::new())))
         // Offline database state
         .manage(OfflineDatabaseState(offline_db))
         // Sync cancellation state
@@ -111,6 +112,7 @@ pub fn run() {
             start_remote_follow,
             stop_remote_follow,
             is_remote_following,
+            get_following_hosts,
             // Keyring commands (secure password storage)
             is_keyring_available,
             save_host_password,
