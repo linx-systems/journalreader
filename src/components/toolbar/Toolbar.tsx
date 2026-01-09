@@ -8,6 +8,8 @@ import {
   Wifi,
   WifiOff,
   CloudDownload,
+  Link,
+  Unlink,
 } from 'lucide-react';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
@@ -16,6 +18,7 @@ import { useStatisticsStore } from '../../stores/statisticsStore';
 import { useOfflineStore } from '../../stores/offlineStore';
 import { useOfflineSync } from '../../hooks/useOfflineSync';
 import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
+import { useScrollSyncStore } from '../../stores/scrollSyncStore';
 import { TabBar } from '../hosts/TabBar';
 import { useEffect } from 'react';
 import clsx from 'clsx';
@@ -27,7 +30,8 @@ export function Toolbar() {
   const { viewMode, setViewMode } = useStatisticsStore();
   const { isOfflineMode, setOfflineMode, triggerSync } = useOfflineStore();
   const { isSyncing } = useOfflineSync();
-  const { connectedHostId, activeTabId } = useConnectionStore();
+  const { activeTabId } = useConnectionStore();
+  const { syncEnabled, setSyncEnabled } = useScrollSyncStore();
 
   // Show offline controls when active tab is a remote host
   const showOfflineControls = activeTabId !== LOCAL_TAB_ID;
@@ -168,6 +172,33 @@ export function Toolbar() {
             <ArrowUp className="h-4 w-4 shrink-0" />
           )}
           <span className="hidden xl:inline">{filter.reverse ? 'Newest' : 'Oldest'}</span>
+        </button>
+
+        {/* Scroll sync toggle - always visible for time-based navigation */}
+        <button
+          onClick={() => setSyncEnabled(!syncEnabled)}
+          disabled={isFollowing}
+          className={clsx(
+            'flex items-center gap-1 px-2 py-1.5 text-sm font-medium rounded-lg transition-colors',
+            'disabled:opacity-50 disabled:cursor-not-allowed',
+            syncEnabled
+              ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700 hover:bg-purple-200 dark:hover:bg-purple-900/50'
+              : 'text-theme bg-theme border border-theme hover:bg-theme-secondary'
+          )}
+          title={
+            isFollowing
+              ? 'Stop follow mode to enable time sync'
+              : syncEnabled
+                ? 'Disable synchronized time scrolling'
+                : 'Enable synchronized time scrolling across tabs'
+          }
+        >
+          {syncEnabled ? (
+            <Link className="h-4 w-4 shrink-0" />
+          ) : (
+            <Unlink className="h-4 w-4 shrink-0" />
+          )}
+          <span className="hidden xl:inline">{syncEnabled ? 'Synced' : 'Sync Time'}</span>
         </button>
 
         {/* Offline controls - only show when active tab is a remote host */}

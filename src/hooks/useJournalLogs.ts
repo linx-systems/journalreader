@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useFilterStore } from '../stores/filterStore';
 import { useConnectionStore, LOCAL_TAB_ID } from '../stores/connectionStore';
 import { useOfflineStore } from '../stores/offlineStore';
+import { useScrollSyncStore } from '../stores/scrollSyncStore';
 import { queryJournal, queryRemoteJournal } from '../lib/tauri';
 import { queryOfflineJournal } from '../lib/offlineTauri';
 import { filtersEqual } from '../lib/types';
@@ -44,6 +45,7 @@ export function useJournalLogs() {
 
   const { connectedHostId, connectionStatus, activeTabId } = useConnectionStore();
   const { isOfflineMode, setOfflineMode } = useOfflineStore();
+  const { syncEnabled, anchorTimestamp } = useScrollSyncStore();
 
   // Determine if the active tab is a remote host
   const isActiveTabRemote = activeTabId !== LOCAL_TAB_ID;
@@ -71,6 +73,9 @@ export function useJournalLogs() {
   activeTabIdRef.current = activeTabId;
   isActiveTabRemoteRef.current = isActiveTabRemote;
 
+  // Track sync-adjusted filter for tab switches (declared before fetchLogs so it can be used)
+  const syncAdjustedFilterRef = useRef<{ since?: string } | null>(null);
+
   const fetchLogs = useCallback(async (append = false) => {
     // Cancel any pending request
     if (abortControllerRef.current) {
@@ -88,9 +93,18 @@ export function useJournalLogs() {
       const currentActiveTabId = activeTabIdRef.current;
       const currentIsActiveTabRemote = isActiveTabRemoteRef.current;
       const currentIsConnectedToActiveTab = isConnectedToActiveTabRef.current;
+
+      // Apply sync-adjusted filter if available (for tab switches with scroll sync)
+      let baseFilter = currentFilter;
+      if (syncAdjustedFilterRef.current && !append) {
+        baseFilter = { ...currentFilter, ...syncAdjustedFilterRef.current };
+        // Clear after use - only applies to the first fetch after tab switch
+        syncAdjustedFilterRef.current = null;
+      }
+
       const filterToUse = append && currentCursorEnd
-        ? { ...currentFilter, afterCursor: currentCursorEnd }
-        : currentFilter;
+        ? { ...baseFilter, afterCursor: currentCursorEnd }
+        : baseFilter;
 
       let result;
       if (currentIsOffline) {
@@ -176,9 +190,26 @@ export function useJournalLogs() {
       // Clear entries and fetch fresh data from the new tab's source
       setEntries([]);
       setCursorEnd(null);
+
+      // If scroll sync is enabled and we have an anchor timestamp,
+      // adjust the filter to ensure we load entries around that timestamp
+      if (syncEnabled && anchorTimestamp !== null) {
+        // Convert microseconds to Date, then to ISO string for the 'since' filter
+        // Go back a bit from the anchor to ensure we have context
+        const anchorDate = new Date(anchorTimestamp / 1000);
+        // Load entries from 5 minutes before the anchor timestamp
+        const sinceDate = new Date(anchorDate.getTime() - 5 * 60 * 1000);
+        const sinceIso = sinceDate.toISOString();
+
+        // Store the sync-adjusted since so fetchLogs can use it
+        syncAdjustedFilterRef.current = { since: sinceIso };
+      } else {
+        syncAdjustedFilterRef.current = null;
+      }
+
       fetchLogs(false);
     }
-  }, [activeTabId, setEntries, setCursorEnd, fetchLogs]);
+  }, [activeTabId, setEntries, setCursorEnd, fetchLogs, syncEnabled, anchorTimestamp]);
 
   // Refresh when offline mode changes
   useEffect(() => {

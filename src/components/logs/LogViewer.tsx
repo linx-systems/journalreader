@@ -3,7 +3,10 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
+import { useConnectionStore } from '../../stores/connectionStore';
+import { useScrollSyncStore } from '../../stores/scrollSyncStore';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
+import { findEntryIndexByTimestamp, getVisibleTimestamp } from '../../lib/scrollSync';
 import { LogEntryRow } from './LogEntry';
 import { LogExport, type LogExportResult } from './LogExport';
 import { Loader2, AlertCircle, FileSearch, ArrowDown } from 'lucide-react';
@@ -20,6 +23,8 @@ export function LogViewer() {
   const parentRef = useRef<HTMLDivElement>(null);
   const { entries, isLoading, error, hasMore, loadMore } = useJournalLogs();
   const { filter, isFollowing, isFollowPaused } = useFilterStore();
+  const { activeTabId } = useConnectionStore();
+  const { syncEnabled, anchorTimestamp, sourceTabId, syncVersion, broadcastTimestamp } = useScrollSyncStore();
   const { pause, resume } = useFollowMode();
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [userScrolled, setUserScrolled] = useState(false);
@@ -140,6 +145,11 @@ export function LogViewer() {
   isFollowingRef.current = isFollowing;
   userScrolledRef.current = userScrolled;
 
+  // Track last processed sync version to avoid duplicate scrolls
+  const lastProcessedSyncVersion = useRef(0);
+  // Track if we're currently syncing to avoid echo loops
+  const isSyncScrolling = useRef(false);
+
   const handleToggleExpand = useCallback((cursor: string) => {
     // Inline anchor update to avoid dependency on updateAnchor
     if (parentRef.current) {
@@ -199,6 +209,8 @@ export function LogViewer() {
     expandedRowsSize: expandedRows.size,
     userScrolled,
     isNewestFirst: filter.reverse !== false,
+    syncEnabled,
+    activeTabId,
   });
   scrollDepsRef.current = {
     isFollowing,
@@ -206,16 +218,19 @@ export function LogViewer() {
     expandedRowsSize: expandedRows.size,
     userScrolled,
     isNewestFirst: filter.reverse !== false,
+    syncEnabled,
+    activeTabId,
   };
 
   const handleScroll = useMemo(() => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let syncTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     const scrollHandler = () => {
       if (!parentRef.current) return;
 
       const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
-      const { isFollowing, isFollowPaused, expandedRowsSize, userScrolled, isNewestFirst } = scrollDepsRef.current;
+      const { isFollowing, isFollowPaused, expandedRowsSize, userScrolled, isNewestFirst, syncEnabled, activeTabId } = scrollDepsRef.current;
 
       // Handle follow mode scroll behavior
       // For newest-first: new entries at top, so check if at top
@@ -236,6 +251,29 @@ export function LogViewer() {
         }
       }
 
+      // Broadcast timestamp for scroll sync (debounced separately, 150ms)
+      // Skip if we're currently scrolling due to a sync event from another tab
+      if (syncEnabled && !isSyncScrolling.current && !viewerState.current.isScrolling) {
+        if (syncTimeoutId) {
+          clearTimeout(syncTimeoutId);
+        }
+        syncTimeoutId = setTimeout(() => {
+          const virtualItems = rowVirtualizer.getVirtualItems();
+          if (virtualItems.length > 0 && entriesRef.current.length > 0) {
+            const timestamp = getVisibleTimestamp(
+              entriesRef.current,
+              virtualItems[0].index,
+              virtualItems[virtualItems.length - 1].index,
+              0.3 // Upper third of viewport
+            );
+            if (timestamp !== null) {
+              broadcastTimestamp(timestamp, activeTabId);
+            }
+          }
+          syncTimeoutId = null;
+        }, 150);
+      }
+
       // No automatic load more on scroll - user clicks the button instead
       // This prevents scroll position issues and infinite loading loops
 
@@ -254,7 +292,7 @@ export function LogViewer() {
         scrollHandler();
       }, 16);
     };
-  }, [pause, resume, updateAnchor]);
+  }, [pause, resume, updateAnchor, broadcastTimestamp, rowVirtualizer]);
 
   // Handle new entries in follow mode - scroll to latest or maintain anchor position
   useEffect(() => {
@@ -300,6 +338,53 @@ export function LogViewer() {
     }
     entriesRef.current = entries;
   }, [entries, isFollowing]);
+
+  // Track which tab we last synced for, to handle tab switches
+  const lastSyncedTabId = useRef<string | null>(null);
+
+  // Handle scroll sync from other tabs
+  // When anchorTimestamp changes from another tab, scroll to that timestamp
+  useEffect(() => {
+    // Skip if sync is disabled or no anchor timestamp
+    if (!syncEnabled || anchorTimestamp === null) return;
+
+    // Skip if this tab is the source of the sync
+    if (sourceTabId === activeTabId) return;
+
+    // Skip if entries not loaded yet (but don't mark as processed)
+    if (entries.length === 0) return;
+
+    // Skip if in follow mode (don't interrupt live streaming)
+    if (isFollowing) return;
+
+    // Check if we need to sync:
+    // 1. New sync version we haven't processed
+    // 2. OR we switched tabs and haven't synced this tab yet
+    const isNewSync = syncVersion > lastProcessedSyncVersion.current;
+    const isTabSwitch = lastSyncedTabId.current !== activeTabId;
+
+    if (!isNewSync && !isTabSwitch) return;
+
+    lastProcessedSyncVersion.current = syncVersion;
+    lastSyncedTabId.current = activeTabId;
+
+    // Find the closest entry to the anchor timestamp
+    const isNewestFirst = filter.reverse !== false;
+    const targetIndex = findEntryIndexByTimestamp(entries, anchorTimestamp, isNewestFirst);
+
+    if (targetIndex >= 0) {
+      // Mark that we're doing a sync scroll to avoid echo
+      isSyncScrolling.current = true;
+
+      // Scroll to the target index
+      rowVirtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'smooth' });
+
+      // Reset sync scrolling flag after animation
+      setTimeout(() => {
+        isSyncScrolling.current = false;
+      }, 500);
+    }
+  }, [syncEnabled, anchorTimestamp, sourceTabId, activeTabId, syncVersion, entries, filter.reverse, isFollowing, rowVirtualizer]);
 
   if (error) {
     return (
