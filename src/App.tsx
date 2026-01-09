@@ -2,6 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { FilterPanel, type FilterPanelRef } from './components/filters/FilterPanel';
 import { LogViewer } from './components/logs/LogViewer';
 import { StatisticsView } from './components/statistics/StatisticsView';
+import { SplitView } from './components/layout/SplitView';
 import { Toolbar } from './components/toolbar/Toolbar';
 import { SettingsPanel } from './components/settings/SettingsPanel';
 import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
@@ -13,6 +14,7 @@ import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useBookmarkStore } from './stores/bookmarkStore';
 import { useStatisticsStore } from './stores/statisticsStore';
 import { useFilterStore } from './stores/filterStore';
+import { useLayoutStore } from './stores/layoutStore';
 import { useJournalLogs } from './hooks/useJournalLogs';
 import { PanelLeftClose, PanelLeft, ScrollText, Settings, Bookmark, Keyboard } from 'lucide-react';
 import clsx from 'clsx';
@@ -25,7 +27,10 @@ function App() {
   const { activeBookmarkId, bookmarks } = useBookmarkStore();
   const { viewMode } = useStatisticsStore();
   const { isFollowing } = useFilterStore();
+  const { layout } = useLayoutStore();
   const { refresh, isLoading } = useJournalLogs();
+
+  const isSplitView = layout !== 'single';
 
   // Enable keyboard shortcuts for bookmarks (Ctrl+1 through Ctrl+9)
   useBookmarkShortcuts();
@@ -140,8 +145,14 @@ function App() {
         {/* Main area */}
         <main className="flex-1 flex flex-col min-w-0 bg-theme">
           <Toolbar />
-          <ErrorBoundary name={viewMode === 'logs' ? 'Log Viewer' : 'Statistics'}>
-            {viewMode === 'logs' ? <LogViewer /> : <StatisticsView />}
+          <ErrorBoundary name={isSplitView ? 'Split View' : viewMode === 'logs' ? 'Log Viewer' : 'Statistics'}>
+            {isSplitView ? (
+              <SplitView />
+            ) : viewMode === 'logs' ? (
+              <LogViewer />
+            ) : (
+              <StatisticsView />
+            )}
           </ErrorBoundary>
         </main>
       </div>

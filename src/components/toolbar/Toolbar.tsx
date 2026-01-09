@@ -10,6 +10,9 @@ import {
   CloudDownload,
   Link,
   Unlink,
+  Columns2,
+  Rows2,
+  Square,
 } from 'lucide-react';
 import { useJournalLogs } from '../../hooks/useJournalLogs';
 import { useFollowMode } from '../../hooks/useFollowMode';
@@ -19,7 +22,9 @@ import { useOfflineStore } from '../../stores/offlineStore';
 import { useOfflineSync } from '../../hooks/useOfflineSync';
 import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
 import { useScrollSyncStore } from '../../stores/scrollSyncStore';
+import { useLayoutStore } from '../../stores/layoutStore';
 import { TabBar } from '../hosts/TabBar';
+import { LayoutSelector } from './LayoutSelector';
 import { useEffect } from 'react';
 import clsx from 'clsx';
 
@@ -30,11 +35,15 @@ export function Toolbar() {
   const { viewMode, setViewMode } = useStatisticsStore();
   const { isOfflineMode, setOfflineMode, triggerSync } = useOfflineStore();
   const { isSyncing } = useOfflineSync();
-  const { activeTabId } = useConnectionStore();
+  const { activeTabId, openTabs } = useConnectionStore();
   const { syncEnabled, setSyncEnabled } = useScrollSyncStore();
+  const { layout } = useLayoutStore();
 
   // Show offline controls when active tab is a remote host
   const showOfflineControls = activeTabId !== LOCAL_TAB_ID;
+
+  // Show split view controls when there are multiple tabs available
+  const showSplitControls = openTabs.length >= 2 || layout !== 'single';
 
   const toggleSortOrder = () => {
     setFilter({ reverse: !filter.reverse });
@@ -200,6 +209,14 @@ export function Toolbar() {
           )}
           <span className="hidden xl:inline">{syncEnabled ? 'Synced' : 'Sync Time'}</span>
         </button>
+
+        {/* Split view layout selector */}
+        {showSplitControls && (
+          <>
+            <div className="h-6 w-px bg-theme-secondary/30" />
+            <LayoutSelector />
+          </>
+        )}
 
         {/* Offline controls - only show when active tab is a remote host */}
         {showOfflineControls && (
