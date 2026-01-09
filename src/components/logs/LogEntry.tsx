@@ -21,8 +21,9 @@ function highlightText(text: string, pattern?: string, caseSensitive?: boolean):
 
   if (!regex) return text;
 
+  // Use match() instead of test() to avoid mutating regex lastIndex state
   return parts.map((part, i) =>
-    regex.test(part) ? (
+    part.match(regex) ? (
       <mark key={i} className="selection-theme rounded px-0.5">
         {part}
       </mark>
