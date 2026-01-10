@@ -254,6 +254,11 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
     </div>
   );
 }, (prev, next) => {
+  // Compare all value props that affect rendering.
+  // Note: onToggleExpand is excluded because parent components (LogViewer, PanelLogViewer)
+  // wrap it with useCallback, ensuring stable references.
+  // Note: caseSensitive is accessed via useFilterStore() hook inside the component,
+  // so store changes trigger re-renders via subscription, not props.
   return prev.entry.cursor === next.entry.cursor
     && prev.isExpanded === next.isExpanded
     && prev.isSelected === next.isSelected
