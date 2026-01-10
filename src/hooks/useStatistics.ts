@@ -73,7 +73,7 @@ export function useStatistics() {
     if (viewMode === 'statistics') {
       fetchStatistics();
     }
-  }, [viewMode, filter, granularity, fetchStatistics]);
+  }, [viewMode, filter, granularity, isRemote, fetchStatistics]);
 
   return {
     statistics,
