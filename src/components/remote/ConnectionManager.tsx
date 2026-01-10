@@ -62,6 +62,22 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
     }
   }, [isOpen, loadHosts]);
 
+  /**
+   * Checks if the error is a host key verification error and sets up the verification dialog.
+   * Returns true if it was a host key error (caller should return early), false otherwise.
+   */
+  const checkHostKeyError = (
+    errorMessage: string,
+    host: RemoteHost,
+    password?: string
+  ): boolean => {
+    if (isHostKeyVerificationError(errorMessage)) {
+      setHostKeyVerification({ host, errorMessage, password });
+      return true;
+    }
+    return false;
+  };
+
   const handleConnect = async (host: RemoteHost, pwd?: string) => {
     // Check if password is needed
     if (host.authMethod === 'password' && !pwd) {
@@ -77,8 +93,7 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
               return;
             } catch (error) {
               const errorMessage = getErrorMessage(error);
-              if (isHostKeyVerificationError(errorMessage)) {
-                setHostKeyVerification({ host, errorMessage, password: savedPassword });
+              if (checkHostKeyError(errorMessage, host, savedPassword)) {
                 return;
               }
               // If auth failed, prompt for password (saved password might be outdated)
@@ -108,10 +123,7 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
       await connect(host.id, pwd);
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      // Check if this is a host key verification error
-      if (isHostKeyVerificationError(errorMessage)) {
-        setHostKeyVerification({ host, errorMessage, password: pwd });
-      }
+      checkHostKeyError(errorMessage, host, pwd);
       // Other errors are shown through connection store
     } finally {
       setIsConnecting(null);
@@ -152,9 +164,8 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
       }
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      // Check if this is a host key verification error
-      if (host && isHostKeyVerificationError(errorMessage)) {
-        setHostKeyVerification({ host, errorMessage, password });
+      if (host) {
+        checkHostKeyError(errorMessage, host, password);
       }
       // Other errors are shown through connection store
     } finally {
@@ -179,10 +190,7 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
       });
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      // Check if this is a host key verification error
-      if (isHostKeyVerificationError(errorMessage)) {
-        setHostKeyVerification({ host, errorMessage });
-      } else {
+      if (!checkHostKeyError(errorMessage, host)) {
         setTestResult({
           hostId: host.id,
           success: false,
