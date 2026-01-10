@@ -61,7 +61,7 @@ export function SplitPanel({
   return (
     <div
       className={clsx(
-        'flex flex-col min-h-0 min-w-0 flex-1',
+        'flex flex-col min-h-0 min-w-0 flex-1 overflow-hidden',
         // Subtle visual distinction between panels
         position === 'right' || position === 'bottom'
           ? 'bg-theme'

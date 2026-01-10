@@ -143,7 +143,7 @@ function App() {
         </aside>
 
         {/* Main area */}
-        <main className="flex-1 flex flex-col min-w-0 bg-theme">
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-theme">
           <Toolbar />
           <ErrorBoundary name={isSplitView ? 'Split View' : viewMode === 'logs' ? 'Log Viewer' : 'Statistics'}>
             {isSplitView ? (

@@ -66,7 +66,7 @@ export function SplitView({
   return (
     <div
       className={clsx(
-        'flex flex-1 min-h-0 min-w-0',
+        'flex flex-1 min-h-0 min-w-0 overflow-hidden',
         isVerticalSplit ? 'flex-row' : 'flex-col'
       )}
     >
