@@ -11,6 +11,7 @@ import {
 import clsx from 'clsx';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useOfflineStore } from '../../stores/offlineStore';
+import { logError } from '../../lib/errorLogger';
 import { useConnectionStore } from '../../stores/connectionStore';
 import { exportOfflineLogs } from '../../lib/offlineTauri';
 import type { OfflineSettings, StorageStats, SyncState, ExportFormat } from '../../lib/offlineTypes';
@@ -79,7 +80,7 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
     try {
       await triggerSync(hostId);
     } catch (error) {
-      console.error('Sync failed:', error);
+      logError(error, { component: 'OfflineSettingsPanel', action: 'sync', hostId });
     }
   };
 
@@ -90,7 +91,7 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
       // Reload stats after delete
       await loadStorageStats();
     } catch (error) {
-      console.error('Delete failed:', error);
+      logError(error, { component: 'OfflineSettingsPanel', action: 'delete', hostId });
     }
   };
 
@@ -132,10 +133,9 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
         reverse: false,
       };
 
-      const count = await exportOfflineLogs(hostId, filter, format, filePath);
-      console.log(`Exported ${count} entries to ${filePath}`);
+      await exportOfflineLogs(hostId, filter, format, filePath);
     } catch (error) {
-      console.error('Export failed:', error);
+      logError(error, { component: 'OfflineSettingsPanel', action: 'export', hostId, format });
     }
   };
 

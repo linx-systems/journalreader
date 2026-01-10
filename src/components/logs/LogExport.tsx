@@ -3,6 +3,7 @@ import { Download, ChevronDown } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import type { JournalEntry, JournalFilter } from '../../lib/types';
+import { logError } from '../../lib/errorLogger';
 import { PRIORITY_LABELS } from '../../lib/types';
 
 export interface LogExportResult {
@@ -172,7 +173,7 @@ export function LogExport({ entries, filter, onExportComplete }: LogExportProps)
         message: `Exported ${entries.length} entries to "${filename}"`,
       });
     } catch (err) {
-      console.error('Export failed:', err);
+      logError(err, { component: 'LogExport', action: 'export', format });
       onExportComplete?.({ type: 'error', message: 'Export failed' });
     }
   };
