@@ -139,7 +139,7 @@ export function SplitPanel({
       )}
 
       {/* Log viewer for this host */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 flex flex-col">
         <PanelLogViewer
           hostId={hostId}
           panelPosition={panelPosition}
