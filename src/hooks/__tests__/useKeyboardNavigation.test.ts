@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { renderHook } from '@testing-library/react';
 import { useKeyboardNavigation } from '../useKeyboardNavigation';
 import { KEYBOARD_SEQUENCE_TIMEOUT_MS } from '../../lib/constants';
 import type { Virtualizer } from '@tanstack/react-virtual';
@@ -57,14 +57,14 @@ function fireKeyDownOnElement(
 }
 
 describe('useKeyboardNavigation', () => {
-  let mockOnSelectionChange: ReturnType<typeof vi.fn>;
-  let mockOnToggleExpand: ReturnType<typeof vi.fn>;
+  let mockOnSelectionChange: Mock<(index: number | null) => void>;
+  let mockOnToggleExpand: Mock<(index: number) => void>;
   let mockVirtualizer: Virtualizer<HTMLDivElement, Element>;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    mockOnSelectionChange = vi.fn();
-    mockOnToggleExpand = vi.fn();
+    mockOnSelectionChange = vi.fn<(index: number | null) => void>();
+    mockOnToggleExpand = vi.fn<(index: number) => void>();
     mockVirtualizer = createMockVirtualizer();
   });
 

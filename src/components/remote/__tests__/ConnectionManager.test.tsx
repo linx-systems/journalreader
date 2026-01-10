@@ -1,6 +1,6 @@
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectionManager } from "../ConnectionManager";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import type { RemoteHost } from "../../../lib/types";

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useFollowMode } from '../useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
 import { useConnectionStore } from '../../stores/connectionStore';
@@ -90,15 +90,6 @@ function resetStores() {
   });
 }
 
-// Helper to flush all pending promises and timers
-async function flushPromisesAndTimers() {
-  // Run all pending microtasks
-  await Promise.resolve();
-  // Run any timers that became ready
-  vi.runAllTimers();
-  // Run any promises that were queued by the timers
-  await Promise.resolve();
-}
 
 describe('useFollowMode', () => {
   beforeEach(() => {
@@ -476,7 +467,7 @@ describe('useFollowMode', () => {
       useFilterStore.setState({ filter: testFilter });
       useFollowModeStore.setState({ lastFilter: null });
 
-      const { result } = renderHook(() => useFollowMode());
+      renderHook(() => useFollowMode());
 
       // After hook renders, the effect should have synchronized lastFilter
       await act(async () => {
@@ -775,7 +766,7 @@ describe('useFollowMode', () => {
     });
 
     it('filterRef is updated on each render', async () => {
-      const { result, rerender } = renderHook(() => useFollowMode());
+      const { rerender } = renderHook(() => useFollowMode());
 
       // Change filter
       act(() => {

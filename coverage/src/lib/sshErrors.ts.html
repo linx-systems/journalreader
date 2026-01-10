@@ -3,7 +3,7 @@
 <html lang="en">
 
 <head>
-    <title>Code coverage report for src/stores/statisticsStore.ts</title>
+    <title>Code coverage report for src/lib/sshErrors.ts</title>
     <meta charset="utf-8" />
     <link rel="stylesheet" href="../../prettify.css" />
     <link rel="stylesheet" href="../../base.css" />
@@ -19,34 +19,34 @@
 <body>
 <div class='wrapper'>
     <div class='pad1'>
-        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/stores</a> statisticsStore.ts</h1>
+        <h1><a href="../../index.html">All files</a> / <a href="index.html">src/lib</a> sshErrors.ts</h1>
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>7/7</span>
+                <span class='fraction'>3/3</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>0/0</span>
+                <span class='fraction'>6/6</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Functions</span>
-                <span class='fraction'>6/6</span>
+                <span class='fraction'>3/3</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
                 <span class="strong">100% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>6/6</span>
+                <span class='fraction'>3/3</span>
             </div>
         
             
@@ -90,10 +90,12 @@
 <a name='L25'></a><a href='#L25'>25</a>
 <a name='L26'></a><a href='#L26'>26</a>
 <a name='L27'></a><a href='#L27'>27</a>
-<a name='L28'></a><a href='#L28'>28</a>
-<a name='L29'></a><a href='#L29'>29</a>
-<a name='L30'></a><a href='#L30'>30</a>
-<a name='L31'></a><a href='#L31'>31</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L28'></a><a href='#L28'>28</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">20x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -103,6 +105,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">9x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -110,49 +113,37 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-yes">19x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-yes">1x</span>
-<span class="cline-any cline-neutral">&nbsp;</span>
-<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">import { create } from 'zustand';
-import type { JournalStatistics, TimeGranularity } from '../lib/types';
-&nbsp;
-interface StatisticsState {
-  viewMode: 'logs' | 'statistics';
-  granularity: TimeGranularity;
-  statistics: JournalStatistics | null;
-  isLoading: boolean;
-  error: string | null;
-&nbsp;
-  setViewMode: (mode: 'logs' | 'statistics') =&gt; void;
-  setGranularity: (granularity: TimeGranularity) =&gt; void;
-  setStatistics: (statistics: JournalStatistics | null) =&gt; void;
-  setLoading: (loading: boolean) =&gt; void;
-  setError: (error: string | null) =&gt; void;
+<span class="cline-any cline-neutral">&nbsp;</span></td><td class="text"><pre class="prettyprint lang-js">/**
+ * Check if an error message indicates SSH host key verification is required.
+ * This covers both first-time connection (unknown host) and host key change scenarios.
+ */
+export function isHostKeyVerificationError(errorMessage: string): boolean {
+  return (
+    errorMessage.includes('Host key verification required') ||
+    errorMessage.includes('HOST KEY HAS CHANGED')
+  );
 }
 &nbsp;
-export const useStatisticsStore = create&lt;StatisticsState&gt;((set) =&gt; ({
-  viewMode: 'logs',
-  granularity: 'auto',
-  statistics: null,
-  isLoading: false,
-  error: null,
+/**
+ * Check if an error message indicates authentication failure.
+ */
+export function isAuthenticationError(errorMessage: string): boolean {
+  return (
+    errorMessage.includes('auth') ||
+    errorMessage.includes('Authentication')
+  );
+}
 &nbsp;
-  setViewMode: (viewMode) =&gt; set({ viewMode }),
-  setGranularity: (granularity) =&gt; set({ granularity }),
-  setStatistics: (statistics) =&gt; set({ statistics }),
-  setLoading: (isLoading) =&gt; set({ isLoading }),
-  setError: (error) =&gt; set({ error }),
-}));
+/**
+ * Extract an error message string from an unknown error value.
+ */
+export function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 &nbsp;</pre></td></tr></table></pre>
 
                 <div class='push'></div><!-- for sticky footer -->

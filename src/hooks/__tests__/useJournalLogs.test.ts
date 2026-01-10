@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useJournalLogs } from '../useJournalLogs';
 import type { JournalFilter, JournalEntry } from '../../lib/types';
 import { DEBOUNCE_MS } from '../../lib/constants';
