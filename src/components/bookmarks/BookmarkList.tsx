@@ -65,6 +65,8 @@ function BookmarkItem({
           }}
           className="p-1 opacity-0 group-hover:opacity-100 hover:bg-theme-secondary
                      rounded transition-all"
+          title={showMenu ? `Close actions for ${bookmark.name}` : `Show actions for ${bookmark.name}`}
+          aria-label={showMenu ? `Close actions for ${bookmark.name}` : `Show actions for ${bookmark.name}`}
         >
           <MoreVertical className="h-3.5 w-3.5" />
         </button>
@@ -89,6 +91,7 @@ function BookmarkItem({
                 }}
                 className="w-full px-3 py-1.5 text-sm text-left text-theme
                            hover:bg-theme-secondary flex items-center gap-2"
+                title={`Edit ${bookmark.name}`}
               >
                 <Edit2 className="h-3.5 w-3.5" />
                 Edit
@@ -101,6 +104,7 @@ function BookmarkItem({
                 }}
                 className="w-full px-3 py-1.5 text-sm text-left text-red-500
                            hover:bg-theme-secondary flex items-center gap-2"
+                title={`Delete ${bookmark.name}`}
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete
@@ -157,6 +161,7 @@ export function BookmarkList({ onImport, onExport }: BookmarkListProps) {
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center gap-2 text-sm font-medium text-theme-secondary
                    hover:text-theme transition-colors"
+        title={isExpanded ? 'Collapse saved filters' : 'Expand saved filters'}
       >
         {isExpanded ? (
           <ChevronDown className="h-4 w-4" />
@@ -194,6 +199,7 @@ export function BookmarkList({ onImport, onExport }: BookmarkListProps) {
                   onClick={onImport}
                   className="flex items-center gap-1.5 px-2 py-1 text-xs text-theme-secondary
                              hover:text-theme hover:bg-theme-secondary rounded transition-colors"
+                  title="Import bookmarks"
                 >
                   <Upload className="h-3 w-3" />
                   Import
@@ -204,6 +210,7 @@ export function BookmarkList({ onImport, onExport }: BookmarkListProps) {
                   onClick={onExport}
                   className="flex items-center gap-1.5 px-2 py-1 text-xs text-theme-secondary
                              hover:text-theme hover:bg-theme-secondary rounded transition-colors"
+                  title="Export bookmarks"
                 >
                   <Download className="h-3 w-3" />
                   Export
@@ -242,6 +249,7 @@ export function BookmarkList({ onImport, onExport }: BookmarkListProps) {
                 onClick={() => setShowDeleteConfirm(null)}
                 className="px-3 py-1.5 text-sm text-theme-secondary hover:text-theme
                            hover:bg-theme-secondary rounded transition-colors"
+                title="Cancel bookmark deletion"
               >
                 Cancel
               </button>
@@ -249,6 +257,7 @@ export function BookmarkList({ onImport, onExport }: BookmarkListProps) {
                 onClick={() => handleDeleteConfirm(showDeleteConfirm)}
                 className="px-3 py-1.5 text-sm bg-red-500 text-white rounded
                            hover:bg-red-600 transition-colors"
+                title="Delete bookmark"
               >
                 Delete
               </button>

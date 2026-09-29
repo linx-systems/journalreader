@@ -87,6 +87,7 @@ export function PriorityFilter() {
                 ? 'bg-theme-secondary text-theme'
                 : 'accent-theme hover:opacity-80'
             )}
+            title="Show all priorities"
           >
             All
           </button>
@@ -98,6 +99,7 @@ export function PriorityFilter() {
                 ? 'bg-theme-secondary text-theme'
                 : 'accent-theme hover:opacity-80'
             )}
+            title="Show error priorities"
           >
             Errors
           </button>

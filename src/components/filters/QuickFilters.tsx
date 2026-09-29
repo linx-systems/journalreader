@@ -64,6 +64,7 @@ export function QuickFilters() {
                   ? 'bg-accent text-white'
                   : 'bg-theme-secondary text-theme-secondary hover:bg-theme-tertiary hover:text-theme'
               )}
+              title={isActive ? `Clear ${qf.label} quick filter` : `Apply ${qf.label} quick filter`}
             >
               {qf.label}
             </button>

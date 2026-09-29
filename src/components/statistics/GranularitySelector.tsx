@@ -28,6 +28,7 @@ export function GranularitySelector() {
                 ? 'bg-accent/20 text-accent ring-1 ring-accent/50'
                 : 'bg-theme-secondary text-theme-secondary hover:text-theme'
             )}
+            title={`Set granularity to ${opt.label}`}
           >
             {opt.label}
           </button>

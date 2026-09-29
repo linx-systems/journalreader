@@ -79,6 +79,8 @@ export function HostKeyVerificationDialog({
           </div>
           <button
             onClick={onReject}
+            title="Cancel host key verification"
+            aria-label="Cancel host key verification"
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
           >
             <X className="h-5 w-5" />
@@ -154,6 +156,7 @@ export function HostKeyVerificationDialog({
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-theme">
           <button
             onClick={onReject}
+            title="Cancel host key verification"
             className="px-4 py-2 text-sm text-theme-secondary hover:text-theme"
           >
             Cancel
@@ -161,6 +164,7 @@ export function HostKeyVerificationDialog({
           <button
             onClick={handleAccept}
             disabled={isLoading || isAccepting || !!error}
+            title={isKeyChanged ? 'Accept changed host key' : 'Accept host key and connect'}
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
             style={{
               backgroundColor: isKeyChanged ? 'rgb(220, 38, 38)' : 'var(--color-accent)'

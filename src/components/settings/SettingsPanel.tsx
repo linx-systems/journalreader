@@ -135,6 +135,8 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           <button
             onClick={onClose}
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
+            title="Close settings"
+            aria-label="Close settings"
           >
             <X className="h-5 w-5" />
           </button>
@@ -151,6 +153,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 : 'border-transparent text-theme-secondary hover:text-theme'
             )}
             style={{ borderColor: activeTab === 'theme' ? 'var(--color-accent)' : undefined }}
+            title="Show theme settings"
           >
             <Palette className="h-4 w-4" />
             Theme
@@ -164,6 +167,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 : 'border-transparent text-theme-secondary hover:text-theme'
             )}
             style={{ borderColor: activeTab === 'offline' ? 'var(--color-accent)' : undefined }}
+            title="Show offline and sync settings"
           >
             <Cloud className="h-4 w-4" />
             Offline & Sync
@@ -192,6 +196,8 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                     followSystem ? 'bg-accent-theme' : 'bg-theme-secondary border border-theme'
                   )}
                   style={{ backgroundColor: followSystem ? 'var(--color-accent)' : undefined }}
+                  title={followSystem ? 'Stop following system theme' : 'Follow system theme'}
+                  aria-label={followSystem ? 'Stop following system theme' : 'Follow system theme'}
                 >
                   <span
                     className={clsx(
@@ -209,6 +215,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   className="flex items-center gap-2 px-3 py-2 text-sm font-medium
                              bg-accent-theme text-white rounded-lg hover:opacity-90 transition-opacity"
                   style={{ backgroundColor: 'var(--color-accent)' }}
+                  title="Create new theme"
                 >
                   <Edit3 className="h-4 w-4" />
                   Create New Theme
@@ -217,6 +224,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                   onClick={handleImport}
                   className="flex items-center gap-2 px-3 py-2 text-sm font-medium
                              bg-theme border border-theme rounded-lg hover:bg-theme-secondary transition-colors"
+                  title="Import theme"
                 >
                   <Upload className="h-4 w-4" />
                   Import Theme
@@ -368,6 +376,7 @@ function ThemeCard({
           className="p-1 rounded hover:opacity-70"
           style={{ color: theme.colors.foregroundSecondary }}
           title="Edit"
+          aria-label="Edit"
         >
           <Edit3 className="h-3.5 w-3.5" />
         </button>
@@ -376,6 +385,7 @@ function ThemeCard({
           className="p-1 rounded hover:opacity-70"
           style={{ color: theme.colors.foregroundSecondary }}
           title="Duplicate"
+          aria-label="Duplicate"
         >
           <Copy className="h-3.5 w-3.5" />
         </button>
@@ -384,6 +394,7 @@ function ThemeCard({
           className="p-1 rounded hover:opacity-70"
           style={{ color: theme.colors.foregroundSecondary }}
           title="Export"
+          aria-label="Export"
         >
           <Download className="h-3.5 w-3.5" />
         </button>
@@ -393,6 +404,7 @@ function ThemeCard({
             className="p-1 rounded hover:opacity-70 ml-auto"
             style={{ color: theme.colors.priority.error }}
             title="Delete"
+            aria-label="Delete"
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>

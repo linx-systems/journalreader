@@ -107,6 +107,8 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
           <button
             onClick={onClose}
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
+            title="Close theme editor"
+            aria-label="Close theme editor"
           >
             <X className="h-5 w-5" />
           </button>
@@ -144,6 +146,8 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
                   isDark ? 'bg-accent-theme' : 'bg-theme-secondary border border-theme'
                 )}
                 style={{ backgroundColor: isDark ? 'var(--color-accent)' : undefined }}
+                title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+                aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
               >
                 <span
                   className={clsx(
@@ -166,6 +170,7 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
                       ? 'border-current accent-theme'
                       : 'border-transparent text-theme-secondary hover:text-theme'
                   )}
+                  title={`Show ${tab} settings`}
                 >
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
@@ -303,6 +308,8 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
                       typography.monospace ? 'bg-accent-theme' : 'bg-theme-secondary border border-theme'
                     )}
                     style={{ backgroundColor: typography.monospace ? 'var(--color-accent)' : undefined }}
+                    title={typography.monospace ? 'Disable monospace mode' : 'Enable monospace mode'}
+                    aria-label={typography.monospace ? 'Disable monospace mode' : 'Enable monospace mode'}
                   >
                     <span
                       className={clsx(
@@ -321,6 +328,7 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
               className="flex items-center gap-2 w-full px-3 py-2 text-sm font-medium
                          text-theme-secondary border border-theme rounded-lg
                          hover:bg-theme-secondary transition-colors"
+              title="Reset to default colors"
             >
               <RotateCcw className="h-4 w-4" />
               Reset to Default Colors
@@ -342,6 +350,7 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-theme-secondary
                        border border-theme rounded-lg hover:bg-theme-secondary transition-colors"
+            title="Cancel theme editing"
           >
             Cancel
           </button>
@@ -350,6 +359,7 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium
                        text-white rounded-lg hover:opacity-90 transition-opacity"
             style={{ backgroundColor: 'var(--color-accent)' }}
+            title="Save theme"
           >
             <Save className="h-4 w-4" />
             Save Theme

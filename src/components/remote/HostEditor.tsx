@@ -87,6 +87,8 @@ export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
           </h2>
           <button
             onClick={onCancel}
+            title="Close host editor"
+            aria-label="Close host editor"
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
           >
             <X className="h-5 w-5" />
@@ -241,6 +243,7 @@ export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
             <button
               type="button"
               onClick={onCancel}
+              title="Cancel host editing"
               className="px-4 py-2 text-sm text-theme-secondary hover:text-theme"
             >
               Cancel
@@ -248,6 +251,7 @@ export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
             <button
               type="submit"
               disabled={isSaving}
+              title={host ? 'Save host changes' : 'Add host'}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-accent-theme text-white rounded-lg hover:opacity-90 disabled:opacity-50"
               style={{ backgroundColor: 'var(--color-accent)' }}
             >

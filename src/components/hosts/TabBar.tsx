@@ -227,6 +227,8 @@ export function TabBar({ onConnect }: TabBarProps) {
           <button
             onClick={() => scrollTabs('left')}
             className="p-1 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors shrink-0"
+            title="Scroll tabs left"
+            aria-label="Scroll tabs left"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -256,6 +258,7 @@ export function TabBar({ onConnect }: TabBarProps) {
                     ? 'bg-theme border-theme text-theme -mb-px z-10'
                     : 'bg-theme-secondary/50 border-transparent text-theme-secondary hover:text-theme hover:bg-theme-secondary'
                 )}
+                title={isActive ? `Current tab: ${getTabLabel(hostId)}` : `Switch to ${getTabLabel(hostId)}`}
               >
                 {/* Status indicator */}
                 {isConnectingThis ? (
@@ -287,6 +290,7 @@ export function TabBar({ onConnect }: TabBarProps) {
                       isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                     )}
                     title="Close tab"
+                    aria-label="Close tab"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -301,6 +305,8 @@ export function TabBar({ onConnect }: TabBarProps) {
           <button
             onClick={() => scrollTabs('right')}
             className="p-1 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors shrink-0"
+            title="Scroll tabs right"
+            aria-label="Scroll tabs right"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -313,6 +319,7 @@ export function TabBar({ onConnect }: TabBarProps) {
               onClick={() => setShowHostMenu(!showHostMenu)}
               className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
               title="Open host tab"
+              aria-label="Open host tab"
             >
               <Plus className="h-4 w-4" />
             </button>
@@ -324,6 +331,7 @@ export function TabBar({ onConnect }: TabBarProps) {
                   <button
                     onClick={() => handleAddHost(LOCAL_TAB_ID)}
                     className="flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-theme-secondary transition-colors rounded-t-lg"
+                    title="Open Local Machine tab"
                   >
                     <Monitor className="h-4 w-4 text-theme-secondary" />
                     <div className="flex-1">
@@ -343,6 +351,7 @@ export function TabBar({ onConnect }: TabBarProps) {
                           key={host.id}
                           onClick={() => handleAddHost(host.id)}
                           className="flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-theme-secondary transition-colors"
+                          title={`Open ${host.name} tab`}
                         >
                           <Server className="h-4 w-4 text-theme-secondary" />
                           <div className="flex-1 min-w-0">
@@ -372,6 +381,7 @@ export function TabBar({ onConnect }: TabBarProps) {
                     setShowManager(true);
                   }}
                   className="flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-theme-secondary transition-colors rounded-b-lg"
+                  title="Manage hosts"
                 >
                   <Settings className="h-4 w-4 text-theme-secondary" />
                   <span className="text-sm text-theme">Manage Hosts...</span>

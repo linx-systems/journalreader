@@ -54,6 +54,8 @@ export function SaveFilterDialog({
             onClick={onClose}
             className="p-1 text-theme-secondary hover:text-theme
                        hover:bg-theme-secondary rounded transition-colors"
+            title={`Close ${title}`}
+            aria-label={`Close ${title}`}
           >
             <X className="h-4 w-4" />
           </button>
@@ -105,6 +107,7 @@ export function SaveFilterDialog({
               onClick={onClose}
               className="px-4 py-2 text-theme-secondary hover:text-theme
                          hover:bg-theme-secondary rounded transition-colors"
+              title="Cancel"
             >
               Cancel
             </button>
@@ -114,6 +117,7 @@ export function SaveFilterDialog({
               className="px-4 py-2 bg-accent text-white rounded
                          hover:bg-accent-hover disabled:opacity-50
                          disabled:cursor-not-allowed transition-colors"
+              title={title === 'Edit Bookmark' ? 'Save bookmark changes' : 'Save filter bookmark'}
             >
               Save
             </button>

@@ -1270,9 +1270,9 @@ describe("ConnectionManager", () => {
         expect(screen.getByText("Remote Hosts")).toBeInTheDocument();
       });
 
-      // Click the X button
-      const closeButton = screen.getByRole("button", { name: "" });
-      await user.click(closeButton);
+      await user.click(
+        screen.getByRole("button", { name: "Close remote hosts" }),
+      );
 
       expect(onClose).toHaveBeenCalled();
     });

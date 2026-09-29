@@ -29,7 +29,12 @@ export function Toast({ message, type, onClose, duration = 4000 }: ToastProps) {
           <AlertCircle className="h-5 w-5" />
         )}
         <span>{message}</span>
-        <button onClick={onClose} className="ml-2 hover:opacity-80">
+        <button
+          onClick={onClose}
+          className="ml-2 hover:opacity-80"
+          title="Dismiss notification"
+          aria-label="Dismiss notification"
+        >
           <X className="h-4 w-4" />
         </button>
       </div>

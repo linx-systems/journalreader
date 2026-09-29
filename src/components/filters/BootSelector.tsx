@@ -112,6 +112,7 @@ export function BootSelector() {
             disabled={isLoading}
             className="p-1 text-theme-secondary hover:text-theme transition-colors disabled:opacity-50"
             title="Refresh boot list"
+            aria-label="Refresh boot list"
           >
             <RefreshCw className={clsx('h-3.5 w-3.5', isLoading && 'animate-spin')} />
           </button>
@@ -119,6 +120,7 @@ export function BootSelector() {
             <button
               onClick={handleClearBoot}
               className="text-xs text-theme-secondary hover:text-theme transition-colors"
+              title="Clear boot filter"
             >
               Clear
             </button>
@@ -132,6 +134,7 @@ export function BootSelector() {
           onClick={() => setIsOpen(!isOpen)}
           className="w-full flex items-center justify-between px-3 py-2 border border-theme
                      rounded-lg bg-theme text-theme text-sm"
+          title={isOpen ? 'Collapse boot selector' : 'Expand boot selector'}
         >
           <span className={clsx(
             isBootSelected ? 'text-theme' : 'text-theme-secondary'
@@ -151,6 +154,7 @@ export function BootSelector() {
                 'w-full text-left px-3 py-2 text-sm hover:bg-theme-secondary transition-colors border-b border-theme',
                 !isBootSelected && 'selection-theme'
               )}
+              title="Show logs from all boot sessions"
             >
               <span className="font-medium">All boots</span>
               <span className="block text-xs text-theme-secondary">Show logs from all boot sessions</span>
@@ -164,6 +168,7 @@ export function BootSelector() {
                   'w-full text-left px-3 py-2 text-sm hover:bg-theme-secondary transition-colors border-b border-theme',
                   filter.bootOffset === 0 && 'selection-theme'
                 )}
+                title="Show logs from current boot"
               >
                 <div className="flex items-center justify-between">
                   <span className="font-medium">Current boot</span>
@@ -204,6 +209,7 @@ export function BootSelector() {
                         'w-full text-left px-3 py-2 text-sm hover:bg-theme-secondary transition-colors',
                         (filter.bootOffset === boot.bootOffset || filter.bootId === boot.bootId) && 'selection-theme'
                       )}
+                      title={`Show logs from ${getBootLabel(boot)}`}
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-medium">{getBootLabel(boot)}</span>

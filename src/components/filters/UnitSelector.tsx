@@ -104,6 +104,7 @@ export function UnitSelector() {
             <button
               onClick={handleClearIncluded}
               className="text-xs text-theme-secondary hover:text-theme transition-colors"
+              title="Clear included units"
             >
               Clear
             </button>
@@ -116,7 +117,12 @@ export function UnitSelector() {
                            bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded"
               >
                 {unit}
-                <button onClick={() => removeIncludedUnit(unit)} className="hover:opacity-80">
+                <button
+                  onClick={() => removeIncludedUnit(unit)}
+                  className="hover:opacity-80"
+                  title={`Remove ${unit} from included units`}
+                  aria-label={`Remove ${unit} from included units`}
+                >
                   <X className="h-3 w-3" />
                 </button>
               </span>
@@ -136,6 +142,7 @@ export function UnitSelector() {
             <button
               onClick={handleClearExcluded}
               className="text-xs text-theme-secondary hover:text-theme transition-colors"
+              title="Clear excluded units"
             >
               Clear
             </button>
@@ -148,7 +155,12 @@ export function UnitSelector() {
                            bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded"
               >
                 {unit}
-                <button onClick={() => removeExcludedUnit(unit)} className="hover:opacity-80">
+                <button
+                  onClick={() => removeExcludedUnit(unit)}
+                  className="hover:opacity-80"
+                  title={`Remove ${unit} from excluded units`}
+                  aria-label={`Remove ${unit} from excluded units`}
+                >
                   <X className="h-3 w-3" />
                 </button>
               </span>
@@ -163,6 +175,7 @@ export function UnitSelector() {
           onClick={() => setIsOpen(!isOpen)}
           className="w-full flex items-center justify-between px-3 py-2 border border-theme
                      rounded-lg bg-theme text-theme text-sm"
+          title={isOpen ? 'Collapse unit selector' : 'Expand unit selector'}
         >
           <span className="text-theme-secondary">{getDropdownLabel()}</span>
           <ChevronDown className={clsx('h-4 w-4 transition-transform', isOpen && 'rotate-180')} />
@@ -183,6 +196,7 @@ export function UnitSelector() {
                     ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
                     : 'text-theme-secondary hover:bg-theme-secondary'
                 )}
+                title="Include units"
               >
                 <Plus className="h-3 w-3" />
                 Include
@@ -195,6 +209,7 @@ export function UnitSelector() {
                     ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                     : 'text-theme-secondary hover:bg-theme-secondary'
                 )}
+                title="Exclude units"
               >
                 <Minus className="h-3 w-3" />
                 Exclude
@@ -230,6 +245,7 @@ export function UnitSelector() {
                       mode === 'include' && 'hover:bg-green-50 dark:hover:bg-green-900/20',
                       mode === 'exclude' && 'hover:bg-red-50 dark:hover:bg-red-900/20'
                     )}
+                    title={`${mode === 'include' ? 'Include' : 'Exclude'} ${unit.name}`}
                   >
                     <span className="font-mono text-xs">
                       <HighlightedText text={unit.name} highlight={search} />

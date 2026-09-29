@@ -85,6 +85,7 @@ export const FilterPanel = forwardRef<FilterPanelRef>(function FilterPanel(_, re
             className="p-1.5 text-theme-secondary hover:text-accent
                        hover:bg-theme-secondary rounded transition-colors"
             title="Save current filter as bookmark"
+            aria-label="Save current filter as bookmark"
           >
             <Star className="h-4 w-4" />
           </button>
@@ -93,6 +94,7 @@ export const FilterPanel = forwardRef<FilterPanelRef>(function FilterPanel(_, re
             className="p-1.5 text-theme-secondary hover:text-theme
                        hover:bg-theme-secondary rounded transition-colors"
             title="Reset filters"
+            aria-label="Reset filters"
           >
             <RotateCcw className="h-4 w-4" />
           </button>

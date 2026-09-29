@@ -123,6 +123,7 @@ export function ThemePreview({ theme }: ThemePreviewProps) {
         }}
       >
         <button
+          title="Primary action preview"
           className="px-3 py-1.5 text-xs font-medium rounded"
           style={{
             backgroundColor: theme.colors.accent,
@@ -132,6 +133,7 @@ export function ThemePreview({ theme }: ThemePreviewProps) {
           Primary Action
         </button>
         <button
+          title="Secondary action preview"
           className="px-3 py-1.5 text-xs font-medium rounded border"
           style={{
             backgroundColor: 'transparent',

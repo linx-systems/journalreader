@@ -58,6 +58,8 @@ export const SearchBar = forwardRef<SearchBarRef>(function SearchBar(_, ref) {
           <button
             onClick={handleClear}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-secondary hover:text-theme transition-colors"
+            title="Clear search"
+            aria-label="Clear search"
           >
             <X className="h-4 w-4" />
           </button>
@@ -67,6 +69,7 @@ export const SearchBar = forwardRef<SearchBarRef>(function SearchBar(_, ref) {
         <button
           onClick={toggleCaseSensitive}
           className="flex items-center gap-2 text-theme-secondary hover:text-theme transition-colors"
+          title={filter.caseSensitive ? 'Disable case-sensitive search' : 'Enable case-sensitive search'}
         >
           {filter.caseSensitive ? (
             <ToggleRight className="h-4 w-4 accent-theme" />

@@ -88,6 +88,7 @@ export function HostCard({
           {isConnected ? (
             <button
               onClick={onDisconnect}
+              title={`Disconnect from ${host.name}`}
               className="px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
             >
               Disconnect
@@ -96,6 +97,8 @@ export function HostCard({
             <button
               onClick={onConnect}
               disabled={isConnecting}
+              title={isConnecting ? `Connecting to ${host.name}` : `Connect to ${host.name}`}
+              aria-label={isConnecting ? `Connecting to ${host.name}` : undefined}
               className="px-3 py-1.5 text-sm font-medium text-theme bg-theme border border-theme rounded hover:bg-theme-secondary transition-colors disabled:opacity-50"
             >
               {isConnecting ? (
@@ -110,6 +113,7 @@ export function HostCard({
             disabled={isTesting}
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme rounded transition-colors disabled:opacity-50"
             title="Test connection"
+            aria-label="Test connection"
           >
             {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
           </button>
@@ -117,6 +121,7 @@ export function HostCard({
             onClick={onEdit}
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme rounded transition-colors"
             title="Edit"
+            aria-label="Edit"
           >
             <Edit3 className="h-4 w-4" />
           </button>
@@ -125,6 +130,7 @@ export function HostCard({
             disabled={isConnected}
             className="p-1.5 text-theme-secondary hover:text-red-600 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors disabled:opacity-50"
             title={isConnected ? 'Disconnect first to delete' : 'Delete'}
+            aria-label={isConnected ? 'Disconnect first to delete' : 'Delete'}
           >
             <Trash2 className="h-4 w-4" />
           </button>

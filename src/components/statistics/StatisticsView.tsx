@@ -58,6 +58,7 @@ export function StatisticsView() {
             className="flex items-center gap-2 mx-auto px-4 py-2 text-sm font-medium
                        text-theme bg-theme border border-theme rounded-lg
                        hover:bg-theme-secondary transition-colors"
+            title="Retry loading statistics"
           >
             <RefreshCw className="h-4 w-4" />
             Retry

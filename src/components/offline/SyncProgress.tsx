@@ -18,6 +18,7 @@ export function SyncProgress() {
         <button
           onClick={() => cancelSync(currentSync.hostId)}
           className="p-1 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
+          title="Cancel sync"
           aria-label="Cancel sync"
         >
           <X className="h-4 w-4" />

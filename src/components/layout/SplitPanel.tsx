@@ -118,6 +118,7 @@ export function SplitPanel({
                 }}
                 className="p-1 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
                 title="Swap panels"
+                aria-label="Swap panels"
               >
                 <ArrowLeftRight className="h-3.5 w-3.5" />
               </button>
@@ -130,6 +131,7 @@ export function SplitPanel({
                 }}
                 className="p-1 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
                 title="Close panel"
+                aria-label="Close panel"
               >
                 <X className="h-3.5 w-3.5" />
               </button>

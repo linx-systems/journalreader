@@ -95,6 +95,7 @@ export function TimeRangePicker() {
                   ? 'selection-theme accent-theme ring-1 ring-current'
                   : 'bg-theme-secondary text-theme-secondary'
               )}
+              title={`Set time range to ${preset.label}`}
             >
               {preset.label}
             </button>
@@ -111,6 +112,7 @@ export function TimeRangePicker() {
                   ? 'selection-theme accent-theme ring-1 ring-current'
                   : 'bg-theme-secondary text-theme-secondary'
               )}
+              title={`Set time range to ${preset.label}`}
             >
               {preset.label}
             </button>
@@ -132,6 +134,7 @@ export function TimeRangePicker() {
               ? 'selection-theme accent-theme ring-1 ring-current'
               : 'bg-theme-secondary text-theme-secondary'
           )}
+          title={showCustom ? 'Hide custom time range' : 'Show custom time range'}
         >
           <Calendar className="h-3 w-3" />
           Custom
@@ -167,6 +170,7 @@ export function TimeRangePicker() {
               onClick={handleCustomApply}
               className="flex-1 py-1 text-xs font-medium rounded
                          selection-theme accent-theme transition-colors"
+              title="Apply custom time range"
             >
               Apply
             </button>
@@ -174,6 +178,7 @@ export function TimeRangePicker() {
               onClick={handleCustomClear}
               className="flex-1 py-1 text-xs font-medium rounded
                          bg-theme text-theme-secondary hover:text-theme transition-colors"
+              title="Clear custom time range"
             >
               Clear
             </button>

@@ -63,6 +63,7 @@ export function HostSelector() {
         <button
           onClick={() => setIsOpen(!isOpen)}
           disabled={isConnecting}
+          title={isOpen ? 'Close log source selector' : 'Choose log source'}
           className={clsx(
             'flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors',
             isConnected
@@ -92,6 +93,7 @@ export function HostSelector() {
             {/* Local option */}
             <button
               onClick={() => handleSelect(null)}
+              title="Use local machine logs"
               className={clsx(
                 'flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-theme-secondary transition-colors rounded-t-lg',
                 !isConnected && 'bg-theme-secondary'
@@ -115,6 +117,7 @@ export function HostSelector() {
                     <button
                       key={host.id}
                       onClick={() => handleSelect(host.id)}
+                      title={`Use logs from ${host.name}`}
                       className={clsx(
                         'flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-theme-secondary transition-colors',
                         connectedHostId === host.id && 'bg-theme-secondary'
@@ -142,6 +145,7 @@ export function HostSelector() {
                 setIsOpen(false);
                 setShowManager(true);
               }}
+              title="Manage remote hosts"
               className="flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-theme-secondary transition-colors rounded-b-lg"
             >
               <Settings className="h-4 w-4 text-theme-secondary" />

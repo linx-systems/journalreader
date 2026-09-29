@@ -62,6 +62,7 @@ export function OfflineBanner() {
       <button
         onClick={() => setOfflineMode(false)}
         className="text-xs text-yellow-700 dark:text-yellow-300 hover:underline focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-1 rounded px-1"
+        title="Try to reconnect"
       >
         Try to reconnect
       </button>

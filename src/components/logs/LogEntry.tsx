@@ -135,7 +135,11 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
         className="flex items-start gap-2 px-3 py-2 cursor-pointer"
         onClick={handleToggle}
       >
-        <button className="mt-1 text-theme-secondary">
+        <button
+          className="mt-1 text-theme-secondary"
+          title={isExpanded ? 'Collapse log entry' : 'Expand log entry'}
+          aria-label={isExpanded ? 'Collapse log entry' : 'Expand log entry'}
+        >
           {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </button>
 
@@ -179,6 +183,7 @@ export const LogEntryRow = memo(function LogEntryRow({ entry, searchPattern, isE
               onClick={handleCopy}
               className="flex items-center gap-1 px-2 py-1 text-xs bg-theme-secondary
                          rounded hover:opacity-80 transition-opacity"
+              title="Copy message"
             >
               {copied ? (
                 <>

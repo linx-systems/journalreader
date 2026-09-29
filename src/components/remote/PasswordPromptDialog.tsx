@@ -67,12 +67,14 @@ export function PasswordPromptDialog({
         <div className="flex justify-end gap-2">
           <button
             onClick={handleCancel}
+            title="Cancel password prompt"
             className="px-4 py-2 text-sm text-theme-secondary hover:text-theme"
           >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
+            title={action === 'connect' ? 'Connect with password' : 'Test connection with password'}
             className="px-4 py-2 text-sm font-medium bg-accent-theme text-white rounded-lg hover:opacity-90"
             style={{ backgroundColor: 'var(--color-accent)' }}
           >

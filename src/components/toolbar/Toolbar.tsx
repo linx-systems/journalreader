@@ -98,6 +98,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                 : 'text-theme-secondary hover:text-theme hover:bg-theme-secondary/50'
             )}
             title="View logs"
+            aria-label="Logs"
           >
             <List className="h-4 w-4 shrink-0" />
             <span className="hidden xl:inline">Logs</span>
@@ -111,6 +112,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                 : 'text-theme-secondary hover:text-theme hover:bg-theme-secondary/50'
             )}
             title="View statistics"
+            aria-label="Stats"
           >
             <BarChart2 className="h-4 w-4 shrink-0" />
             <span className="hidden xl:inline">Stats</span>
@@ -165,6 +167,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                 ? 'Stop following (F)'
                 : 'Start following new entries (F)'
           }
+          aria-label={isFollowing ? 'Following' : 'Follow'}
         >
           <Radio className={clsx('h-4 w-4 shrink-0', isFollowing && 'animate-pulse')} />
           <span className="hidden xl:inline">{isFollowing ? 'Following' : 'Follow'}</span>
@@ -178,6 +181,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                      hover:bg-theme-secondary transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
           title={isFollowing ? 'Stop follow mode to refresh' : 'Refresh logs'}
+          aria-label="Refresh"
         >
           <RefreshCw className={clsx('h-4 w-4 shrink-0', isLoading && 'animate-spin')} />
           <span className="hidden xl:inline">Refresh</span>
@@ -192,6 +196,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                      hover:bg-theme-secondary transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
           title={filter.reverse ? 'Sorted: Newest first' : 'Sorted: Oldest first'}
+          aria-label={filter.reverse ? 'Newest' : 'Oldest'}
         >
           {filter.reverse ? (
             <ArrowDown className="h-4 w-4 shrink-0" />
@@ -219,6 +224,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                 ? 'Disable synchronized time scrolling'
                 : 'Enable synchronized time scrolling across tabs'
           }
+          aria-label={syncEnabled ? 'Synced' : 'Sync Time'}
         >
           {syncEnabled ? (
             <Link className="h-4 w-4 shrink-0" />
@@ -254,6 +260,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
               title={isSyncing ? 'Syncing in progress...' : 'Sync offline logs'}
+              aria-label={isSyncing ? 'Syncing' : 'Sync'}
             >
               <CloudDownload className={clsx('h-4 w-4 shrink-0', isSyncing && 'animate-pulse')} />
               <span className="hidden xl:inline">{isSyncing ? 'Syncing' : 'Sync'}</span>
@@ -269,6 +276,7 @@ export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarP
                   : 'text-theme bg-theme border border-theme hover:bg-theme-secondary'
               )}
               title={isOfflineMode ? 'Switch to online mode' : 'Switch to offline mode'}
+              aria-label={isOfflineMode ? 'Offline' : 'Online'}
             >
               {isOfflineMode ? (
                 <WifiOff className="h-4 w-4 shrink-0" />

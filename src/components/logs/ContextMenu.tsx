@@ -168,6 +168,7 @@ export function ContextMenu({
                      hover:bg-theme-secondary transition-colors disabled:opacity-50
                      disabled:cursor-not-allowed"
           style={{ color: 'var(--color-foreground)' }}
+          title={item.label}
         >
           <span className="text-theme-secondary" style={{ color: 'var(--color-foreground-secondary)' }}>
             {item.icon}

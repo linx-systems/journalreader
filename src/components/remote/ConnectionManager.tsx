@@ -308,6 +308,8 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
           </div>
           <button
             onClick={onClose}
+            title="Close remote hosts"
+            aria-label="Close remote hosts"
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
           >
             <X className="h-5 w-5" />
@@ -360,6 +362,7 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
         <div className="px-6 py-4 border-t border-theme">
           <button
             onClick={() => setIsCreating(true)}
+            title="Add remote host"
             className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-accent-theme text-white rounded-lg hover:opacity-90 transition-opacity"
             style={{ backgroundColor: 'var(--color-accent)' }}
           >

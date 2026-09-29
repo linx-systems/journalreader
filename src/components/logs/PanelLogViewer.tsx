@@ -332,6 +332,7 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
             <button
               onClick={canRetry ? retry : refresh}
               className="text-sm accent-theme hover:opacity-80"
+              title={canRetry ? 'Retry loading logs' : 'Refresh logs'}
             >
               Retry
             </button>
@@ -390,11 +391,11 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
           <span>{error}</span>
           <div className="flex shrink-0 gap-3">
             {canRetry && (
-              <button onClick={retry} className="accent-theme hover:opacity-80">
+              <button onClick={retry} className="accent-theme hover:opacity-80" title="Retry loading logs">
                 Retry
               </button>
             )}
-            <button onClick={refresh} className="accent-theme hover:opacity-80">
+            <button onClick={refresh} className="accent-theme hover:opacity-80" title="Refresh logs">
               Refresh logs
             </button>
           </div>
@@ -475,6 +476,7 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
             <button
               onClick={loadMore}
               className="text-sm accent-theme hover:opacity-80"
+              title="Load more logs"
             >
               Load more...
             </button>

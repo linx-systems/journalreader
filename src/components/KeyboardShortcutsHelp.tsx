@@ -62,6 +62,8 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelp
           <button
             onClick={onClose}
             className="p-1.5 text-theme-secondary hover:text-theme hover:bg-theme-secondary rounded transition-colors"
+            title="Close keyboard shortcuts"
+            aria-label="Close keyboard shortcuts"
           >
             <X className="h-5 w-5" />
           </button>

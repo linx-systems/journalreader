@@ -68,6 +68,7 @@ export function LayoutSelector() {
             : 'text-theme bg-theme border border-theme hover:bg-theme-secondary'
         )}
         title={isSplit ? 'Split view active' : 'Change layout'}
+        aria-label={layout === 'single' ? 'Single' : 'Split'}
       >
         {layout === 'split-vertical' ? (
           <Columns2 className="h-4 w-4 shrink-0" />
@@ -94,6 +95,7 @@ export function LayoutSelector() {
                   ? 'bg-accent/10 text-accent'
                   : 'hover:bg-theme-secondary text-theme'
               )}
+              title="Use single view"
             >
               <Square className="h-4 w-4" />
               <div className="flex-1">
@@ -110,6 +112,7 @@ export function LayoutSelector() {
                   ? 'bg-accent/10 text-accent'
                   : 'hover:bg-theme-secondary text-theme'
               )}
+              title="Use vertical split view"
             >
               <Columns2 className="h-4 w-4" />
               <div className="flex-1">
@@ -126,6 +129,7 @@ export function LayoutSelector() {
                   ? 'bg-accent/10 text-accent'
                   : 'hover:bg-theme-secondary text-theme'
               )}
+              title="Use horizontal split view"
             >
               <Rows2 className="h-4 w-4" />
               <div className="flex-1">
@@ -148,6 +152,7 @@ export function LayoutSelector() {
                     key={hostId}
                     onClick={() => handleQuickCompare(hostId)}
                     className="flex items-center gap-3 w-full px-3 py-2 text-left rounded hover:bg-theme-secondary transition-colors"
+                    title={`Compare with ${getHostLabel(hostId)}`}
                   >
                     {hostId === LOCAL_TAB_ID ? (
                       <Monitor className="h-4 w-4 text-theme-secondary" />

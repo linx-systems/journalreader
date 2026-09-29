@@ -211,6 +211,8 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
                 localSettings.autoSync ? 'bg-accent-theme' : 'bg-theme-secondary border border-theme'
               )}
               style={{ backgroundColor: localSettings.autoSync ? 'var(--color-accent)' : undefined }}
+              title={localSettings.autoSync ? 'Disable automatic sync' : 'Enable automatic sync'}
+              aria-label={localSettings.autoSync ? 'Disable automatic sync' : 'Enable automatic sync'}
             >
               <span
                 className={clsx(
@@ -254,6 +256,8 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
                 localSettings.enabled ? 'bg-accent-theme' : 'bg-theme-secondary border border-theme'
               )}
               style={{ backgroundColor: localSettings.enabled ? 'var(--color-accent)' : undefined }}
+              title={localSettings.enabled ? 'Disable sync on startup' : 'Enable sync on startup'}
+              aria-label={localSettings.enabled ? 'Disable sync on startup' : 'Enable sync on startup'}
             >
               <span
                 className={clsx(
@@ -287,6 +291,15 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
                 ? undefined
                 : 'var(--color-accent)',
           }}
+          title={
+            saveStatus === 'saving'
+              ? 'Saving settings'
+              : saveStatus === 'saved'
+              ? 'Settings saved'
+              : saveStatus === 'error'
+              ? 'Retry saving settings'
+              : 'Save offline settings'
+          }
         >
           {saveStatus === 'saving' && 'Saving...'}
           {saveStatus === 'saved' && 'Saved!'}
@@ -419,6 +432,13 @@ function HostStorageCard({
                 ? 'A sync is already running.'
                 : 'Sync now'
             }
+            aria-label={
+              isActiveSyncHost
+                ? 'Syncing...'
+                : isSyncing
+                ? 'A sync is already running.'
+                : 'Sync now'
+            }
           >
             <RefreshCw className={clsx('h-4 w-4', isActiveSyncHost && 'animate-spin')} />
           </button>
@@ -429,6 +449,7 @@ function HostStorageCard({
               onClick={onExportMenuToggle}
               className="p-2 rounded-lg text-theme-secondary hover:text-theme hover:bg-theme transition-colors"
               title="Export"
+              aria-label="Export"
             >
               <Download className="h-4 w-4" />
               <ChevronDown className="h-3 w-3 absolute bottom-1 right-1" />
@@ -438,18 +459,21 @@ function HostStorageCard({
                 <button
                   onClick={() => onExport('json')}
                   className="w-full px-3 py-1.5 text-left text-sm text-theme hover:bg-theme-secondary transition-colors"
+                  title="Export as JSON"
                 >
                   JSON
                 </button>
                 <button
                   onClick={() => onExport('text')}
                   className="w-full px-3 py-1.5 text-left text-sm text-theme hover:bg-theme-secondary transition-colors"
+                  title="Export as text"
                 >
                   Text
                 </button>
                 <button
                   onClick={() => onExport('csv')}
                   className="w-full px-3 py-1.5 text-left text-sm text-theme hover:bg-theme-secondary transition-colors"
+                  title="Export as CSV"
                 >
                   CSV
                 </button>
@@ -463,12 +487,14 @@ function HostStorageCard({
               <button
                 onClick={onDelete}
                 className="px-2 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                title="Confirm deletion of offline data"
               >
                 Confirm
               </button>
               <button
                 onClick={onDeleteCancel}
                 className="px-2 py-1 text-xs font-medium bg-theme border border-theme rounded text-theme-secondary hover:text-theme transition-colors"
+                title="Cancel deletion"
               >
                 Cancel
               </button>
@@ -478,6 +504,7 @@ function HostStorageCard({
               onClick={onDeleteConfirm}
               className="p-2 rounded-lg text-theme-secondary hover:text-red-500 hover:bg-theme transition-colors"
               title="Delete offline data"
+              aria-label="Delete offline data"
             >
               <Trash2 className="h-4 w-4" />
             </button>

@@ -81,6 +81,7 @@ export function ErrorFallback({ error, onRetry, componentName }: ErrorFallbackPr
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium
                      text-white bg-accent hover:bg-accent/90 rounded-lg
                      transition-colors"
+          title="Try again"
         >
           <RefreshCw className="h-4 w-4" />
           Try again
@@ -114,6 +115,7 @@ export function RootErrorFallback({ error, onRetry }: RootErrorFallbackProps): R
           className="flex items-center gap-2 px-6 py-3 text-sm font-medium
                      text-white bg-blue-600 hover:bg-blue-500 rounded-lg
                      transition-colors"
+          title="Reload application"
         >
           <RefreshCw className="h-4 w-4" />
           Reload Application

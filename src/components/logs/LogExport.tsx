@@ -205,6 +205,7 @@ export function LogExport({ entries, filter, onExportComplete }: LogExportProps)
               onClick={() => handleExport('json')}
               className="w-full px-3 py-1.5 text-left text-sm text-theme
                          hover:bg-theme-secondary transition-colors"
+              title="Export logs as JSON"
             >
               JSON
             </button>
@@ -212,6 +213,7 @@ export function LogExport({ entries, filter, onExportComplete }: LogExportProps)
               onClick={() => handleExport('csv')}
               className="w-full px-3 py-1.5 text-left text-sm text-theme
                          hover:bg-theme-secondary transition-colors"
+              title="Export logs as CSV"
             >
               CSV
             </button>
@@ -219,6 +221,7 @@ export function LogExport({ entries, filter, onExportComplete }: LogExportProps)
               onClick={() => handleExport('text')}
               className="w-full px-3 py-1.5 text-left text-sm text-theme
                          hover:bg-theme-secondary transition-colors"
+              title="Export logs as plain text"
             >
               Plain Text
             </button>

@@ -97,6 +97,8 @@ function App() {
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-1.5 text-theme-secondary hover:text-theme
                        hover:bg-theme-secondary rounded transition-colors"
+            title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            aria-label={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
           >
             {sidebarOpen ? (
               <PanelLeftClose className="h-5 w-5" />
@@ -123,6 +125,7 @@ function App() {
             className="p-1.5 text-theme-secondary hover:text-theme
                        hover:bg-theme-secondary rounded transition-colors"
             title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts (?)"
           >
             <Keyboard className="h-5 w-5" />
           </button>
@@ -131,6 +134,7 @@ function App() {
             className="p-1.5 text-theme-secondary hover:text-theme
                        hover:bg-theme-secondary rounded transition-colors"
             title="Settings (Ctrl+,)"
+            aria-label="Settings (Ctrl+,)"
           >
             <Settings className="h-5 w-5" />
           </button>

@@ -13,6 +13,7 @@ A modern, native Linux desktop application for reading and filtering system jour
 - **Expandable Entries** - Click any log entry to view full metadata (PID, UID, executable, hostname, etc.)
 - **Theme Support** - Dark/light themes with system-aware defaults, plus custom theme creation
 - **Multi-Boot Support** – View and compare logs across different boot sessions
+- **Accessible Controls** - Hover tooltips and descriptive labels clarify every button, including icon-only actions
 
 ## Screenshots
 

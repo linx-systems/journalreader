@@ -544,6 +544,7 @@ export function LogViewer({
           <button
             onClick={canRetry ? onRetry : onRefresh}
             className="mt-4 text-sm accent-theme hover:opacity-80"
+            title={canRetry ? 'Retry loading logs' : 'Refresh logs'}
           >
             Retry
           </button>
@@ -623,11 +624,11 @@ export function LogViewer({
           <span>{error}</span>
           <div className="flex shrink-0 gap-3">
             {canRetry && (
-              <button onClick={onRetry} className="accent-theme hover:opacity-80">
+              <button onClick={onRetry} className="accent-theme hover:opacity-80" title="Retry loading logs">
                 Retry
               </button>
             )}
-            <button onClick={onRefresh} className="accent-theme hover:opacity-80">
+            <button onClick={onRefresh} className="accent-theme hover:opacity-80" title="Refresh logs">
               Refresh logs
             </button>
           </div>
@@ -708,6 +709,7 @@ export function LogViewer({
             <button
               onClick={onLoadMore}
               className="text-sm accent-theme hover:opacity-80"
+              title="Load more logs"
             >
               Load more...
             </button>
@@ -727,6 +729,7 @@ export function LogViewer({
             className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700
                        text-white text-sm font-medium rounded-lg shadow-lg
                        transition-colors"
+            title="Resume following new log entries"
           >
             <ArrowDown className={filter.reverse !== false ? "h-4 w-4 rotate-180" : "h-4 w-4"} />
             Resume following
