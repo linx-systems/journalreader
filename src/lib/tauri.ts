@@ -34,12 +34,12 @@ export async function getLogCount(filter: JournalFilter): Promise<number> {
   return invoke<number>('get_log_count', { filter });
 }
 
-export async function startFollow(filter: JournalFilter): Promise<void> {
-  return invoke<void>('start_follow', { filter });
+export async function startFollow(filter: JournalFilter, sessionId: string): Promise<void> {
+  return invoke<void>('start_follow', { filter, sessionId });
 }
 
-export async function stopFollow(): Promise<void> {
-  return invoke<void>('stop_follow');
+export async function stopFollow(sessionId: string): Promise<void> {
+  return invoke<void>('stop_follow', { sessionId });
 }
 
 export async function isFollowing(): Promise<boolean> {
@@ -133,8 +133,11 @@ export async function removeHostKey(hostname: string, port: number): Promise<boo
 // Remote Journal Commands
 // ============================================================================
 
-export async function queryRemoteJournal(filter: JournalFilter): Promise<JournalQueryResult> {
-  return invoke<JournalQueryResult>('query_remote_journal', { filter });
+export async function queryRemoteJournal(
+  hostId: string,
+  filter: JournalFilter,
+): Promise<JournalQueryResult> {
+  return invoke<JournalQueryResult>('query_remote_journal', { hostId, filter });
 }
 
 export async function getRemoteLogCount(filter: JournalFilter): Promise<number> {
@@ -156,18 +159,20 @@ export async function getRemoteStatistics(
 }
 
 export async function startRemoteFollow(
+  hostId: string,
   filter: JournalFilter,
+  sessionId: string,
   password?: string
 ): Promise<void> {
-  return invoke<void>('start_remote_follow', { filter, password });
+  return invoke<void>('start_remote_follow', { hostId, filter, sessionId, password });
 }
 
-export async function stopRemoteFollow(): Promise<void> {
-  return invoke<void>('stop_remote_follow');
+export async function stopRemoteFollow(hostId: string, sessionId: string): Promise<void> {
+  return invoke<void>('stop_remote_follow', { hostId, sessionId });
 }
 
-export async function isRemoteFollowing(): Promise<boolean> {
-  return invoke<boolean>('is_remote_following');
+export async function isRemoteFollowing(hostId: string): Promise<boolean> {
+  return invoke<boolean>('is_remote_following', { hostId });
 }
 
 // ============================================================================

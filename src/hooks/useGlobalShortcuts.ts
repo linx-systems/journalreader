@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { isModalOpen } from '../components/ui/ModalDialog';
 
 export interface GlobalShortcutsOptions {
   /** Callback for search focus (/ or Ctrl+F) */
@@ -52,6 +53,7 @@ export function useGlobalShortcuts({
   };
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (isModalOpen()) return;
     const {
       onFocusSearch,
       onRefresh,

@@ -3,6 +3,7 @@ import { Monitor, Server, X, Plus, Wifi, Settings, ChevronLeft, ChevronRight } f
 import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
 import { ConnectionManager } from '../remote/ConnectionManager';
 import clsx from 'clsx';
+import { isModalOpen } from '../ui/ModalDialog';
 
 interface TabBarProps {
   onConnect?: (hostId: string, password?: string) => Promise<void>;
@@ -78,6 +79,7 @@ export function TabBar({ onConnect }: TabBarProps) {
   // Keyboard navigation: Ctrl+Tab / Ctrl+Shift+Tab to switch tabs
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isModalOpen()) return;
       // Don't trigger if user is typing in an input field
       if (
         e.target instanceof HTMLInputElement ||

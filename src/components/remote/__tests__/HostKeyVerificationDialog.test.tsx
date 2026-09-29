@@ -1,4 +1,4 @@
-import { render, screen, waitFor, cleanup } from "@testing-library/react";
+import { render, screen, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostKeyVerificationDialog } from "../HostKeyVerificationDialog";
@@ -974,5 +974,27 @@ describe("HostKeyVerificationDialog", () => {
         expect(removeHostKey).toHaveBeenCalledWith("custom-host.example.com", 3333);
       });
     });
+  });
+  it("rejects once without accepting when native Escape cancels the verification", async () => {
+    const host = createTestHost("host-id", "Untrusted Host");
+    const onAccept = vi.fn();
+    const onReject = vi.fn();
+    vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
+
+    render(
+      <HostKeyVerificationDialog
+        host={host}
+        errorMessage="Host key verification required"
+        onAccept={onAccept}
+        onReject={onReject}
+      />
+    );
+
+    const dialog = await screen.findByRole("dialog", { name: "Verify Host Key" });
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+
+    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(acceptHostKey).not.toHaveBeenCalled();
   });
 });

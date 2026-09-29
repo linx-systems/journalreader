@@ -1,5 +1,6 @@
 import { useRef, useCallback } from 'react';
 import type { RemoteHost } from '../../lib/types';
+import { ModalDialog } from '../ui/ModalDialog';
 
 export interface PasswordPromptDialogProps {
   host: RemoteHost | undefined;
@@ -37,9 +38,13 @@ export function PasswordPromptDialog({
   }, [onCancel, clearPassword]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <ModalDialog
+      isOpen
+      onRequestClose={handleCancel}
+      labelledBy="password-prompt-title"
+    >
       <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-sm p-6">
-        <h3 className="text-lg font-semibold text-theme mb-4">
+        <h3 id="password-prompt-title" className="text-lg font-semibold text-theme mb-4">
           {action === 'connect' ? 'Connect to' : 'Test connection to'} {host?.name}
         </h3>
         <p className="text-sm text-theme-secondary mb-4">
@@ -53,7 +58,6 @@ export function PasswordPromptDialog({
           onChange={(e) => { passwordRef.current = e.target.value; }}
           placeholder={host?.authMethod === 'password' ? 'Password' : 'Key passphrase (optional)'}
           className="w-full px-3 py-2 border border-theme rounded-lg bg-theme text-theme mb-4"
-          autoFocus
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               handleSubmit();
@@ -76,6 +80,6 @@ export function PasswordPromptDialog({
           </button>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

@@ -71,8 +71,16 @@ The left sidebar provides filtering options:
 
 ### Keyboard Shortcuts
 
-- Toggle the filter sidebar for more viewing space
-- Click any log entry to expand and view full details
+- Press `?` to open the in-app shortcut reference.
+- Use `j`/`k` or the arrow keys to move through entries, and `Enter` or `Space` to expand one.
+- Use `/` or `Ctrl+F` for search, `Ctrl+R` to refresh, and `f` to toggle live follow mode.
+- While a modal dialog is open, application shortcuts are suspended; `Esc` closes the dialog.
+
+### Split View
+
+- Drag the separator to resize panels; the new ratio is saved when the drag finishes.
+- Focus the separator and use the arrow keys for 1% adjustments, `Home`/`End` for the limits, or double-click to reset to 50%.
+- Press `Esc` during a drag to restore the ratio from before the drag.
 
 ### Themes
 

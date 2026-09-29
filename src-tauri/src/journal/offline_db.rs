@@ -5,12 +5,13 @@
 
 use crate::error::JournalError;
 use crate::journal::hosts::get_app_config_dir;
-use rusqlite::{Connection, params};
-use std::path::PathBuf;
+use rusqlite::{Connection, OpenFlags, params};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Current schema version for migration tracking
-const SCHEMA_VERSION: i32 = 1;
+#[cfg(test)]
+const SCHEMA_VERSION: i32 = 2;
 
 /// Get the path to the offline database file
 fn get_database_path() -> Result<PathBuf, JournalError> {
@@ -23,11 +24,14 @@ pub struct OfflineDatabase {
 }
 
 impl OfflineDatabase {
-    /// Initialize the database, creating tables if they don't exist
+    /// Initialize the writable database, creating tables and indexes as needed.
     pub fn init() -> Result<Self, JournalError> {
         let path = get_database_path()?;
         let conn = Connection::open(&path).map_err(|e| {
             JournalError::ConfigError(format!("Failed to open offline database: {}", e))
+        })?;
+        conn.execute_batch("PRAGMA journal_mode = WAL;").map_err(|e| {
+            JournalError::ConfigError(format!("Failed to enable WAL for offline database: {}", e))
         })?;
 
         let db = Self { conn };
@@ -36,18 +40,30 @@ impl OfflineDatabase {
         Ok(db)
     }
 
+    /// Open an existing database without applying migrations or permitting writes.
+    pub fn open_read_only(path: &Path) -> Result<Self, JournalError> {
+        let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(
+            |e| JournalError::ConfigError(format!("Failed to open offline database read-only: {}", e)),
+        )?;
+
+        Ok(Self { conn })
+    }
+
     /// Create from an existing connection (primarily for testing)
     #[cfg(test)]
     pub(crate) fn from_connection(conn: Connection) -> Self {
         Self { conn }
     }
 
-    /// Run database migrations to create or update schema
+    /// Run database migrations to create or update schema.
     pub(crate) fn run_migrations(&self) -> Result<(), JournalError> {
         let current_version = self.get_schema_version()?;
 
         if current_version < 1 {
             self.migrate_v1()?;
+        }
+        if current_version < 2 {
+            self.migrate_v2()?;
         }
 
         Ok(())
@@ -99,7 +115,7 @@ impl OfflineDatabase {
         Ok(())
     }
 
-    /// Migration to schema version 1: Initial schema
+    /// Migration to schema version 1: initial schema.
     fn migrate_v1(&self) -> Result<(), JournalError> {
         // Create journal entries table
         self.conn
@@ -264,17 +280,35 @@ impl OfflineDatabase {
                 JournalError::ConfigError(format!("Failed to create offline_settings table: {}", e))
             })?;
 
-        // Set schema version
-        self.set_schema_version(SCHEMA_VERSION)?;
+        // This migration must continue to record its own schema version so
+        // newly-created databases still run the v2 index replacement.
+        self.set_schema_version(1)?;
 
         Ok(())
     }
 
-    /// Get a reference to the database connection
-    #[cfg(test)]
-    pub fn connection(&self) -> &Connection {
-        &self.conn
+    /// Migration to schema version 2: replace timestamp-only paging index.
+    fn migrate_v2(&self) -> Result<(), JournalError> {
+        let tx = self.conn.unchecked_transaction().map_err(|e| {
+            JournalError::ConfigError(format!("Failed to start v2 migration transaction: {}", e))
+        })?;
+
+        tx.execute_batch(
+            r#"
+            DROP INDEX IF EXISTS idx_host_time;
+            CREATE INDEX IF NOT EXISTS idx_host_time_cursor
+                ON journal_entries(host_id, realtime_timestamp DESC, cursor DESC);
+            INSERT OR REPLACE INTO offline_settings (key, value)
+                VALUES ('schema_version', '2');
+            "#,
+        )
+        .map_err(|e| JournalError::ConfigError(format!("Failed to apply v2 migration: {}", e)))?;
+
+        tx.commit().map_err(|e| {
+            JournalError::ConfigError(format!("Failed to commit v2 migration: {}", e))
+        })
     }
+
 
     /// Verify the database schema is correct
     #[cfg(test)]
@@ -419,7 +453,7 @@ mod tests {
         let (db, _temp_dir) = create_test_db();
 
         let indexes = [
-            "idx_host_time",
+            "idx_host_time_cursor",
             "idx_host_unit",
             "idx_host_priority",
             "idx_host_boot",
@@ -436,6 +470,16 @@ mod tests {
                 .expect("Query failed");
             assert!(exists, "Index {} should exist", index);
         }
+
+        let obsolete_index_exists: bool = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='index' AND name='idx_host_time'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("Query failed");
+        assert!(!obsolete_index_exists, "obsolete timestamp-only index should be removed");
     }
 
     #[test]
@@ -571,5 +615,47 @@ mod tests {
 
         // Schema should still be valid
         assert!(db.verify_schema().expect("Verify failed"));
+    }
+
+    #[test]
+    fn test_v1_to_v2_migration_preserves_rows_and_fts_schema() {
+        let temp_dir = tempdir().expect("Failed to create temp dir");
+        let path = temp_dir.path().join("offline.db");
+        let db = OfflineDatabase {
+            conn: Connection::open(&path).expect("Failed to open test database"),
+        };
+        db.migrate_v1().expect("Failed to create v1 schema");
+        assert_eq!(db.get_schema_version().unwrap(), 1);
+        db.conn
+            .execute(
+                "INSERT INTO journal_entries \
+                 (host_id, cursor, realtime_timestamp, boot_id, message, priority, synced_at) \
+                 VALUES ('host', 'cursor', 100, 'boot', 'preserved', 6, 100)",
+                [],
+            )
+            .expect("Failed to insert v1 row");
+
+        db.run_migrations().expect("Failed to migrate to v2");
+
+        assert_eq!(db.get_schema_version().unwrap(), 2);
+        let message: String = db
+            .conn
+            .query_row(
+                "SELECT message FROM journal_entries WHERE host_id = 'host' AND cursor = 'cursor'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("Migrated row should remain");
+        assert_eq!(message, "preserved");
+        let indexed: bool = db
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+                 WHERE type = 'index' AND name = 'idx_host_time_cursor')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(indexed);
     }
 }

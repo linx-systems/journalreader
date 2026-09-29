@@ -63,6 +63,25 @@ describe('splitPanelStore', () => {
       expect(state.leftPanel.entries[1].cursor).toBe('c2');
     });
 
+    it('increments each panel result generation only when replacing its first page', () => {
+      const initialState = useSplitPanelStore.getState();
+      const initialLeftGeneration = initialState.leftPanel.resultGeneration;
+      const initialRightGeneration = initialState.rightPanel.resultGeneration;
+
+      act(() => {
+        initialState.setLeftEntries([createMockEntry('left-1', 'left')]);
+        initialState.appendLeftEntries([createMockEntry('left-2', 'left append')]);
+        initialState.prependLeftEntries([createMockEntry('left-3', 'left prepend')]);
+        initialState.setRightEntries([createMockEntry('right-1', 'right')]);
+        initialState.appendRightEntries([createMockEntry('right-2', 'right append')]);
+        initialState.prependRightEntries([createMockEntry('right-3', 'right prepend')]);
+      });
+
+      const state = useSplitPanelStore.getState();
+      expect(state.leftPanel.resultGeneration).toBe(initialLeftGeneration + 1);
+      expect(state.rightPanel.resultGeneration).toBe(initialRightGeneration + 1);
+    });
+
     it('should set loading state for left panel', () => {
       act(() => {
         useSplitPanelStore.getState().setLeftLoading(true);

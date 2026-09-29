@@ -4,6 +4,7 @@ import { isKeyringAvailable } from '../../lib/tauri';
 import type { RemoteHost, RemoteHostInput, AuthMethod } from '../../lib/types';
 import { PORT_MIN, PORT_MAX, DEFAULT_SSH_PORT } from '../../lib/constants';
 import clsx from 'clsx';
+import { ModalDialog } from '../ui/ModalDialog';
 
 function isValidPort(port: number): boolean {
   return Number.isInteger(port) && port >= PORT_MIN && port <= PORT_MAX;
@@ -74,10 +75,14 @@ export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <ModalDialog
+      isOpen
+      onRequestClose={onCancel}
+      labelledBy="host-editor-title"
+    >
       <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-theme">
-          <h2 className="text-lg font-semibold text-theme">
+          <h2 id="host-editor-title" className="text-lg font-semibold text-theme">
             {host ? 'Edit Host' : 'Add Host'}
           </h2>
           <button
@@ -252,6 +257,6 @@ export function HostEditor({ host, onSave, onCancel }: HostEditorProps) {
           </div>
         </form>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

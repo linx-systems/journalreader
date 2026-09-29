@@ -105,23 +105,6 @@ export async function updateOfflineSettings(
   return invoke<void>('update_offline_settings', { settings });
 }
 
-// ============================================================================
-// Offline Mode Commands
-// ============================================================================
-
-/**
- * Check if the app is currently in offline mode.
- */
-export async function isOfflineMode(): Promise<boolean> {
-  return invoke<boolean>('is_offline_mode');
-}
-
-/**
- * Set the offline mode state.
- */
-export async function setOfflineMode(offline: boolean): Promise<void> {
-  return invoke<void>('set_offline_mode', { offline });
-}
 
 // ============================================================================
 // Sync Commands

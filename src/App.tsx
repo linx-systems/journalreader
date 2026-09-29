@@ -16,6 +16,9 @@ import { useStatisticsStore } from './stores/statisticsStore';
 import { useFilterStore } from './stores/filterStore';
 import { useLayoutStore } from './stores/layoutStore';
 import { useJournalLogs } from './hooks/useJournalLogs';
+import { useSplitPanelStore } from './stores/splitPanelStore';
+import { useFollowMode } from './hooks/useFollowMode';
+import { useFollowModeStore } from './stores/followModeStore';
 import { PanelLeftClose, PanelLeft, ScrollText, Settings, Bookmark, Keyboard } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -26,12 +29,11 @@ function App() {
   const filterPanelRef = useRef<FilterPanelRef>(null);
   const { activeBookmarkId, bookmarks } = useBookmarkStore();
   const { viewMode } = useStatisticsStore();
-  const { isFollowing } = useFilterStore();
   const { layout } = useLayoutStore();
-  const { refresh, isLoading } = useJournalLogs();
-
+  const triggerPanelRefresh = useSplitPanelStore((state) => state.triggerRefresh);
   const isSplitView = layout !== 'single';
-
+  const { refresh, loadMore, retry, canRetry } = useJournalLogs(!isSplitView);
+  const followMode = useFollowMode();
   // Enable keyboard shortcuts for bookmarks (Ctrl+1 through Ctrl+9)
   useBookmarkShortcuts();
 
@@ -46,20 +48,27 @@ function App() {
   }, [sidebarOpen]);
 
   const handleRefresh = useCallback(() => {
-    if (!isLoading && !isFollowing) {
+    if (useLayoutStore.getState().layout !== 'single') {
+      triggerPanelRefresh();
+      return;
+    }
+    const { isLoading, isFollowing } = useFilterStore.getState();
+    if (!isLoading && !isFollowing && useFollowModeStore.getState().desiredSession === null) {
       refresh();
     }
-  }, [refresh, isLoading, isFollowing]);
+  }, [refresh, triggerPanelRefresh]);
 
   const handleToggleSidebar = useCallback(() => {
     setSidebarOpen((prev) => !prev);
   }, []);
 
   const handleOpenSettings = useCallback(() => {
+    setHelpOpen(false);
     setSettingsOpen(true);
   }, []);
 
   const handleShowHelp = useCallback(() => {
+    setSettingsOpen(false);
     setHelpOpen(true);
   }, []);
 
@@ -110,7 +119,7 @@ function App() {
         </div>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setHelpOpen(true)}
+            onClick={handleShowHelp}
             className="p-1.5 text-theme-secondary hover:text-theme
                        hover:bg-theme-secondary rounded transition-colors"
             title="Keyboard shortcuts (?)"
@@ -118,7 +127,7 @@ function App() {
             <Keyboard className="h-5 w-5" />
           </button>
           <button
-            onClick={() => setSettingsOpen(true)}
+            onClick={handleOpenSettings}
             className="p-1.5 text-theme-secondary hover:text-theme
                        hover:bg-theme-secondary rounded transition-colors"
             title="Settings (Ctrl+,)"
@@ -144,13 +153,20 @@ function App() {
 
         {/* Main area */}
         <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-theme">
-          <Toolbar />
+          <Toolbar onRefresh={handleRefresh} onToggleFollow={followMode.toggle} followAvailable={followMode.isAvailable} />
           <ErrorBoundary name={isSplitView ? 'Split View' : viewMode === 'logs' ? 'Log Viewer' : 'Statistics'}>
             {isSplitView ? (
               <SplitView />
             ) : viewMode === 'logs' ? (
-              <LogViewer />
-            ) : (
+              <LogViewer
+                onRefresh={handleRefresh}
+                onLoadMore={loadMore}
+                onRetry={retry}
+                canRetry={canRetry}
+                onPauseFollow={followMode.pause}
+                onResumeFollow={followMode.resume}
+              />
+              ) : (
               <StatisticsView />
             )}
           </ErrorBoundary>

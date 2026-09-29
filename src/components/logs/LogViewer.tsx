@@ -1,9 +1,8 @@
-import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useState, useEffect, useLayoutEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useJournalLogs } from '../../hooks/useJournalLogs';
-import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
-import { useConnectionStore } from '../../stores/connectionStore';
+import { LOCAL_TAB_ID, useConnectionStore } from '../../stores/connectionStore';
+import { useOfflineStore } from '../../stores/offlineStore';
 import { useScrollSyncStore } from '../../stores/scrollSyncStore';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 import { findEntryIndexByTimestamp, getVisibleTimestamp } from '../../lib/scrollSync';
@@ -19,37 +18,102 @@ interface ViewerState {
   lastExpandedCursor: string | null;
 }
 
-export function LogViewer() {
+interface LogViewerProps {
+  onRefresh: () => void;
+  onLoadMore: () => void;
+  onRetry: () => void;
+  canRetry: boolean;
+  onPauseFollow: () => void;
+  onResumeFollow: () => void;
+}
+
+export function LogViewer({
+  onRefresh,
+  onLoadMore,
+  onRetry,
+  canRetry,
+  onPauseFollow,
+  onResumeFollow,
+}: LogViewerProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const { entries, isLoading, error, hasMore, loadMore } = useJournalLogs();
-  const { filter, isFollowing, isFollowPaused } = useFilterStore();
-  const { activeTabId } = useConnectionStore();
+  const entries = useFilterStore((state) => state.entries);
+  const resultGeneration = useFilterStore((state) => state.resultGeneration);
+  const isLoading = useFilterStore((state) => state.isLoading);
+  const error = useFilterStore((state) => state.error);
+  const hasMore = useFilterStore((state) => state.hasMore);
+  const filter = useFilterStore((state) => state.filter);
+  const isFollowing = useFilterStore((state) => state.isFollowing);
+  const isFollowPaused = useFilterStore((state) => state.isFollowPaused);
+  const activeTabId = useConnectionStore((state) => state.activeTabId);
+  const connectedHostId = useConnectionStore((state) => state.connectedHostId);
+  const connectionStatus = useConnectionStore((state) => state.connectionStatus);
+  const isOfflineMode = useOfflineStore((state) => state.isOfflineMode);
   const { syncEnabled, anchorTimestamp, sourceTabId, syncVersion, broadcastTimestamp } = useScrollSyncStore();
-  const { pause, resume } = useFollowMode();
+  const pause = onPauseFollow;
+  const resume = onResumeFollow;
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [userScrolled, setUserScrolled] = useState(false);
   const [exportNotification, setExportNotification] = useState<LogExportResult | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const sourceIdentity = activeTabId === LOCAL_TAB_ID
+    ? 'local'
+    : `${activeTabId}:${connectedHostId === activeTabId && connectionStatus === 'connected' && !isOfflineMode ? 'remote' : 'cached'}`;
+  const replacementIdentity = `${sourceIdentity}:${JSON.stringify(filter)}:${resultGeneration}`;
 
-  // Refs for timeout cleanup to prevent memory leaks
   const exportNotificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollToLatestTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const automaticScrollFrameRef = useRef<number | null>(null);
+  const programmaticScrollFrameRef = useRef<number | null>(null);
+  const syncResetFrameRef = useRef<number | null>(null);
+  const syncObservedScrollTopRef = useRef<number | null>(null);
+  const syncPreviousScrollTopRef = useRef<number | null>(null);
+  const syncStableFramesRef = useRef(0);
   const scrollSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Cleanup all timeouts on unmount
+  const isSyncScrolling = useRef(false);
+  const suppressNextSyncScrollRef = useRef(false);
+  const cancelScheduledScrollWork = useCallback(() => {
+    const parent = parentRef.current;
+    const wasSyncScrolling = isSyncScrolling.current;
+    const hasPendingSyncScroll =
+      wasSyncScrolling
+      && syncObservedScrollTopRef.current !== null
+      && parent !== null
+      && parent.scrollTop !== syncObservedScrollTopRef.current;
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+    if (automaticScrollFrameRef.current !== null) {
+      cancelAnimationFrame(automaticScrollFrameRef.current);
+      automaticScrollFrameRef.current = null;
+    }
+    if (programmaticScrollFrameRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollFrameRef.current);
+      programmaticScrollFrameRef.current = null;
+    }
+    viewerState.current.isScrolling = false;
+    if (syncResetFrameRef.current !== null) {
+      cancelAnimationFrame(syncResetFrameRef.current);
+      syncResetFrameRef.current = null;
+    }
+    isSyncScrolling.current = false;
+    syncObservedScrollTopRef.current = null;
+    syncPreviousScrollTopRef.current = null;
+    syncStableFramesRef.current = 0;
+    if (wasSyncScrolling) suppressNextSyncScrollRef.current = hasPendingSyncScroll;
+    if (scrollSyncTimeoutRef.current) {
+      clearTimeout(scrollSyncTimeoutRef.current);
+      scrollSyncTimeoutRef.current = null;
+    }
+  }, []);
   useEffect(() => {
     return () => {
       if (exportNotificationTimeoutRef.current) {
         clearTimeout(exportNotificationTimeoutRef.current);
       }
-      if (scrollToLatestTimeoutRef.current) {
-        clearTimeout(scrollToLatestTimeoutRef.current);
-      }
-      if (scrollSyncTimeoutRef.current) {
-        clearTimeout(scrollSyncTimeoutRef.current);
-      }
+      cancelScheduledScrollWork();
     };
-  }, []);
+  }, [cancelScheduledScrollWork]);
 
   const handleExportComplete = useCallback((result: LogExportResult) => {
     setExportNotification(result);
@@ -79,41 +143,59 @@ export function LogViewer() {
     count: entries.length,
     getScrollElement: () => parentRef.current,
     getItemKey,
-    estimateSize: () => 48,
+    estimateSize: () => 41,
     overscan: 10,
-    measureElement: (element) => element?.getBoundingClientRect().height ?? 48,
+    measureElement: (element) => element?.getBoundingClientRect().height ?? 41,
   });
+  const isFollowingRef = useRef(isFollowing);
+  const followScrollStateRef = useRef({
+    isFollowing,
+    isFollowPaused,
+    expandedRowsSize: expandedRows.size,
+  });
+  isFollowingRef.current = isFollowing;
+  followScrollStateRef.current = {
+    isFollowing,
+    isFollowPaused,
+    expandedRowsSize: expandedRows.size,
+  };
 
-  // Handle keyboard navigation toggle expand by index
+  const toggleExpandedCursor = useCallback((cursor: string) => {
+    if (parentRef.current) {
+      const parent = parentRef.current;
+      const anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
+      if (anchorEl) {
+        const parentRect = parent.getBoundingClientRect();
+        const anchorRect = anchorEl.getBoundingClientRect();
+        viewerState.current.anchor = {
+          cursor,
+          offset: anchorRect.top - parentRect.top,
+        };
+      }
+    }
+    cancelScheduledScrollWork();
+
+    setExpandedRows((previous) => {
+      const next = new Set(previous);
+      if (next.has(cursor)) {
+        next.delete(cursor);
+      } else {
+        next.add(cursor);
+        viewerState.current.lastExpandedCursor = cursor;
+      }
+      if (isFollowingRef.current) {
+        pause();
+      }
+      return next;
+    });
+  }, [cancelScheduledScrollWork, pause]);
+
   const handleKeyboardToggleExpand = useCallback((index: number) => {
     const entry = entries[index];
     if (entry) {
-      // Use the same expand logic but called by index
-      const cursor = entry.cursor;
-      if (parentRef.current) {
-        const parent = parentRef.current;
-        const anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
-        if (anchorEl) {
-          const parentRect = parent.getBoundingClientRect();
-          const anchorRect = anchorEl.getBoundingClientRect();
-          viewerState.current.anchor = {
-            cursor,
-            offset: anchorRect.top - parentRect.top,
-          };
-        }
-      }
-      setExpandedRows((prev) => {
-        const next = new Set(prev);
-        if (next.has(cursor)) {
-          next.delete(cursor);
-        } else {
-          next.add(cursor);
-          viewerState.current.lastExpandedCursor = cursor;
-        }
-        return next;
-      });
+      toggleExpandedCursor(entry.cursor);
     }
-  }, [entries]);
+  }, [entries, toggleExpandedCursor]);
 
   // Keyboard navigation for log list
   useKeyboardNavigation({
@@ -125,10 +207,6 @@ export function LogViewer() {
     enabled: !isLoading && entries.length > 0,
   });
 
-  // Clear selection when entries change (filter change)
-  useEffect(() => {
-    setSelectedIndex(null);
-  }, [filter]);
 
   const updateAnchor = useCallback((preferredCursor?: string) => {
     if (!parentRef.current) return;
@@ -162,73 +240,66 @@ export function LogViewer() {
     };
   }, [entries, rowVirtualizer]);
 
-  // Store these in refs so handleToggleExpand can access current values without re-creating
-  const isFollowingRef = useRef(isFollowing);
-  const userScrolledRef = useRef(userScrolled);
-  isFollowingRef.current = isFollowing;
-  userScrolledRef.current = userScrolled;
 
   // Track last processed sync version to avoid duplicate scrolls
   const lastProcessedSyncVersion = useRef(0);
-  // Track if we're currently syncing to avoid echo loops
-  const isSyncScrolling = useRef(false);
 
-  const handleToggleExpand = useCallback((cursor: string) => {
-    // Inline anchor update to avoid dependency on updateAnchor
-    if (parentRef.current) {
-      const parent = parentRef.current;
-      const anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
-      if (anchorEl) {
-        const parentRect = parent.getBoundingClientRect();
-        const anchorRect = anchorEl.getBoundingClientRect();
-        viewerState.current.anchor = {
-          cursor,
-          offset: anchorRect.top - parentRect.top,
-        };
-      }
+  const handleToggleExpand = toggleExpandedCursor;
+
+  const isAtLatest = useCallback((element: HTMLDivElement) => (
+    filter.reverse !== false
+      ? element.scrollTop < 1
+      : element.scrollHeight - element.scrollTop - element.clientHeight < 1
+  ), [filter.reverse]);
+
+  const scrollToLatest = useCallback((smooth = false, automatic = false) => {
+    if (
+      automatic
+      && (
+        !followScrollStateRef.current.isFollowing
+        || followScrollStateRef.current.isFollowPaused
+        || followScrollStateRef.current.expandedRowsSize > 0
+      )
+    ) {
+      return;
     }
+    const parent = parentRef.current;
+    if (!parent) return;
 
-    setExpandedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(cursor)) {
-        next.delete(cursor);
-      } else {
-        next.add(cursor);
-        viewerState.current.lastExpandedCursor = cursor;
-      }
-      if (isFollowingRef.current) {
-        if (next.size > 0) {
-          pause();
-        } else if (!userScrolledRef.current) {
-          resume();
-          viewerState.current.lastExpandedCursor = null;
-        }
-      }
-      return next;
-    });
-  }, [pause, resume]);
-
-  // Scroll to the end where new entries appear in follow mode
-  // For newest-first (reverse: true): scroll to top
-  // For oldest-first (reverse: false): scroll to bottom
-  const scrollToLatest = useCallback(() => {
-    if (!parentRef.current) return;
     viewerState.current.isScrolling = true;
-    const isNewestFirst = filter.reverse !== false;
-    if (isNewestFirst) {
-      parentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      parentRef.current.scrollTo({ top: parentRef.current.scrollHeight, behavior: 'smooth' });
-    }
-    if (scrollToLatestTimeoutRef.current) {
-      clearTimeout(scrollToLatestTimeoutRef.current);
-    }
-    scrollToLatestTimeoutRef.current = setTimeout(() => {
-      viewerState.current.isScrolling = false;
-    }, 500);
-  }, [filter.reverse]);
+    parent.scrollTo({
+      top: filter.reverse !== false ? 0 : parent.scrollHeight,
+      behavior: smooth ? 'smooth' : 'auto',
+    });
 
-  // Store scroll handler deps in refs to avoid recreating debounced function
+    if (programmaticScrollFrameRef.current !== null) {
+      cancelAnimationFrame(programmaticScrollFrameRef.current);
+    }
+    let previousPosition = parent.scrollTop;
+    let remainingIdleFrames = 2;
+    const finishProgrammaticScroll = () => {
+      const currentParent = parentRef.current;
+      if (!currentParent || isAtLatest(currentParent)) {
+        viewerState.current.isScrolling = false;
+        programmaticScrollFrameRef.current = null;
+        return;
+      }
+      if (currentParent.scrollTop === previousPosition) {
+        remainingIdleFrames -= 1;
+        if (remainingIdleFrames === 0) {
+          viewerState.current.isScrolling = false;
+          programmaticScrollFrameRef.current = null;
+          return;
+        }
+      } else {
+        previousPosition = currentParent.scrollTop;
+        remainingIdleFrames = 2;
+      }
+      programmaticScrollFrameRef.current = requestAnimationFrame(finishProgrammaticScroll);
+    };
+    programmaticScrollFrameRef.current = requestAnimationFrame(finishProgrammaticScroll);
+  }, [filter.reverse, isAtLatest]);
+
   const scrollDepsRef = useRef({
     isFollowing,
     isFollowPaused,
@@ -248,122 +319,128 @@ export function LogViewer() {
     activeTabId,
   };
 
-  const handleScroll = useMemo(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let syncTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  useEffect(() => {
+    if (!isFollowing || isFollowPaused || expandedRows.size > 0) {
+      cancelScheduledScrollWork();
+    }
+  }, [cancelScheduledScrollWork, expandedRows.size, isFollowing, isFollowPaused]);
 
-    const scrollHandler = () => {
-      if (!parentRef.current) return;
+  const handleScroll = useCallback(() => {
+    if (isSyncScrolling.current) {
+      syncObservedScrollTopRef.current = parentRef.current?.scrollTop ?? null;
+      suppressNextSyncScrollRef.current = false;
+      return;
+    }
+    if (suppressNextSyncScrollRef.current) {
+      suppressNextSyncScrollRef.current = false;
+      return;
+    }
+    if (scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const parent = parentRef.current;
+      if (!parent) return;
 
-      const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
+      const { scrollTop, scrollHeight, clientHeight } = parent;
       const { isFollowing, isFollowPaused, expandedRowsSize, userScrolled, isNewestFirst, syncEnabled, activeTabId } = scrollDepsRef.current;
 
-      // Handle follow mode scroll behavior
-      // For newest-first: new entries at top, so check if at top
-      // For oldest-first: new entries at bottom, so check if at bottom
+      if (isSyncScrolling.current) return;
+
       if (isFollowing && !viewerState.current.isScrolling) {
         const atLatest = isNewestFirst
-          ? scrollTop < 50  // At top for newest-first
-          : scrollHeight - scrollTop - clientHeight < 50;  // At bottom for oldest-first
+          ? scrollTop < 50
+          : scrollHeight - scrollTop - clientHeight < 50;
 
         if (!atLatest && !userScrolled) {
-          // User scrolled away from latest entries - pause follow mode
+          updateAnchor();
           setUserScrolled(true);
           pause();
         } else if (atLatest && userScrolled) {
-          // User scrolled back to latest entries - resume follow mode
           setUserScrolled(false);
           resume();
         }
       }
 
-      // Broadcast timestamp for scroll sync (debounced separately, 150ms)
-      // Skip if we're currently scrolling due to a sync event from another tab
       if (syncEnabled && !isSyncScrolling.current && !viewerState.current.isScrolling) {
-        if (syncTimeoutId) {
-          clearTimeout(syncTimeoutId);
+        if (scrollSyncTimeoutRef.current) {
+          clearTimeout(scrollSyncTimeoutRef.current);
         }
-        syncTimeoutId = setTimeout(() => {
+        scrollSyncTimeoutRef.current = setTimeout(() => {
           const virtualItems = rowVirtualizer.getVirtualItems();
           if (virtualItems.length > 0 && entriesRef.current.length > 0) {
             const timestamp = getVisibleTimestamp(
               entriesRef.current,
               virtualItems[0].index,
               virtualItems[virtualItems.length - 1].index,
-              0.3 // Upper third of viewport
+              0.3,
             );
             if (timestamp !== null) {
               broadcastTimestamp(timestamp, activeTabId);
             }
           }
-          syncTimeoutId = null;
+          scrollSyncTimeoutRef.current = null;
         }, 150);
       }
-
-      // No automatic load more on scroll - user clicks the button instead
-      // This prevents scroll position issues and infinite loading loops
 
       if (isFollowing && (isFollowPaused || expandedRowsSize > 0)) {
         updateAnchor(viewerState.current.lastExpandedCursor ?? undefined);
       } else if (!isFollowing || (!isFollowPaused && expandedRowsSize === 0)) {
         viewerState.current.anchor = null;
       }
-    };
+    });
+  }, [broadcastTimestamp, pause, resume, rowVirtualizer, updateAnchor]);
 
-    // Debounced wrapper (~60fps)
-    return () => {
-      if (timeoutId) return; // Skip if already scheduled
-      timeoutId = setTimeout(() => {
-        timeoutId = null;
-        scrollHandler();
-      }, 16);
-    };
-  }, [pause, resume, updateAnchor, broadcastTimestamp, rowVirtualizer]);
+  useLayoutEffect(() => {
+    const previousLength = viewerState.current.prevEntriesLength;
+    const currentLength = entries.length;
 
-  // Handle new entries in follow mode - scroll to latest or maintain anchor position
-  useEffect(() => {
-    const prevLength = viewerState.current.prevEntriesLength;
-    const newLength = entries.length;
-
-    if (isFollowing && newLength > prevLength) {
-      // Follow mode: scroll to latest entries if not paused and no rows are expanded
+    if (isFollowing && currentLength > previousLength) {
       if (!isFollowPaused && expandedRows.size === 0) {
-        scrollToLatest();
+        if (automaticScrollFrameRef.current !== null) {
+          cancelAnimationFrame(automaticScrollFrameRef.current);
+        }
+        automaticScrollFrameRef.current = requestAnimationFrame(() => {
+          automaticScrollFrameRef.current = null;
+          scrollToLatest(false, true);
+        });
         viewerState.current.anchor = null;
       } else if (parentRef.current && viewerState.current.anchor) {
         const parent = parentRef.current;
         const anchor = viewerState.current.anchor;
+        const anchorIndex = entries.findIndex((entry) => entry.cursor === anchor.cursor);
+        const anchorStart = anchorIndex >= 0
+          ? rowVirtualizer.measurementsCache[anchorIndex]?.start
+          : undefined;
+        if (anchorStart !== undefined) {
+          parent.scrollTop = anchorStart - anchor.offset;
+        }
+
         const anchorEl = parent.querySelector(`[data-cursor="${anchor.cursor}"]`);
         if (anchorEl) {
           const parentRect = parent.getBoundingClientRect();
-          const anchorRect = anchorEl.getBoundingClientRect();
-          const newOffset = anchorRect.top - parentRect.top;
-          const delta = newOffset - anchor.offset;
-          if (delta !== 0) {
-            parent.scrollTop += delta;
-          }
+          const newOffset = anchorEl.getBoundingClientRect().top - parentRect.top;
+          parent.scrollTop += newOffset - anchor.offset;
         }
       }
     }
-    viewerState.current.prevEntriesLength = newLength;
-  }, [entries, entries.length, expandedRows.size, isFollowing, isFollowPaused, scrollToLatest]);
+    viewerState.current.prevEntriesLength = currentLength;
+  }, [entries, expandedRows.size, isFollowing, isFollowPaused, rowVirtualizer, scrollToLatest]);
+  const previousReplacementIdentityRef = useRef(replacementIdentity);
+  useLayoutEffect(() => {
+    if (previousReplacementIdentityRef.current === replacementIdentity) return;
 
-  // Reset user scrolled state and expanded rows when follow mode stops
-  useEffect(() => {
-    if (!isFollowing) {
-      setUserScrolled(false);
-      setExpandedRows(new Set());
-    }
-  }, [isFollowing]);
+    previousReplacementIdentityRef.current = replacementIdentity;
+    cancelScheduledScrollWork();
+    viewerState.current.anchor = null;
+    viewerState.current.lastExpandedCursor = null;
+    viewerState.current.prevEntriesLength = entries.length;
+    viewerState.current.isScrolling = false;
+    setExpandedRows(new Set());
+    setSelectedIndex(null);
+    setUserScrolled(false);
+    parentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [cancelScheduledScrollWork, entries.length, replacementIdentity]);
 
-  // Clear expanded rows when entries change significantly (filter change)
-  useEffect(() => {
-    // If entries array reference changed and we're not in follow mode, clear expanded rows
-    if (entriesRef.current !== entries && !isFollowing) {
-      setExpandedRows(new Set());
-    }
-    entriesRef.current = entries;
-  }, [entries, isFollowing]);
 
   // Track which tab we last synced for, to handle tab switches
   const lastSyncedTabId = useRef<string | null>(null);
@@ -397,25 +474,54 @@ export function LogViewer() {
     // Find the closest entry to the anchor timestamp
     const isNewestFirst = filter.reverse !== false;
     const targetIndex = findEntryIndexByTimestamp(entries, anchorTimestamp, isNewestFirst);
-
     if (targetIndex >= 0) {
-      // Mark that we're doing a sync scroll to avoid echo
+      const scrollTopBefore = parentRef.current?.scrollTop;
       isSyncScrolling.current = true;
-
-      // Scroll to the target index
-      rowVirtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'smooth' });
-
-      // Reset sync scrolling flag after animation
-      if (scrollSyncTimeoutRef.current) {
-        clearTimeout(scrollSyncTimeoutRef.current);
+      suppressNextSyncScrollRef.current = true;
+      syncObservedScrollTopRef.current = scrollTopBefore ?? null;
+      syncPreviousScrollTopRef.current = scrollTopBefore ?? null;
+      syncStableFramesRef.current = 0;
+      rowVirtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
+      if (syncResetFrameRef.current !== null) {
+        cancelAnimationFrame(syncResetFrameRef.current);
       }
-      scrollSyncTimeoutRef.current = setTimeout(() => {
+      const finishSyncScroll = () => {
+        const parent = parentRef.current;
+        if (!parent) {
+          isSyncScrolling.current = false;
+          suppressNextSyncScrollRef.current = false;
+          syncObservedScrollTopRef.current = null;
+          syncPreviousScrollTopRef.current = null;
+          syncStableFramesRef.current = 0;
+          syncResetFrameRef.current = null;
+          return;
+        }
+
+        if (parent.scrollTop === syncPreviousScrollTopRef.current) {
+          syncStableFramesRef.current += 1;
+        } else {
+          syncPreviousScrollTopRef.current = parent.scrollTop;
+          syncStableFramesRef.current = 0;
+        }
+
+        if (syncStableFramesRef.current < 2) {
+          syncResetFrameRef.current = requestAnimationFrame(finishSyncScroll);
+          return;
+        }
+
+        suppressNextSyncScrollRef.current = false;
         isSyncScrolling.current = false;
-      }, 500);
+        syncObservedScrollTopRef.current = null;
+        syncPreviousScrollTopRef.current = null;
+        syncStableFramesRef.current = 0;
+        syncResetFrameRef.current = null;
+      };
+      syncResetFrameRef.current = requestAnimationFrame(finishSyncScroll);
     }
   }, [syncEnabled, anchorTimestamp, sourceTabId, activeTabId, syncVersion, entries, filter.reverse, isFollowing, rowVirtualizer]);
 
-  if (error) {
+
+  if (error && entries.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-8">
@@ -435,6 +541,12 @@ export function LogViewer() {
               </code>
             </p>
           )}
+          <button
+            onClick={canRetry ? onRetry : onRefresh}
+            className="mt-4 text-sm accent-theme hover:opacity-80"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
@@ -506,6 +618,22 @@ export function LogViewer() {
           {exportNotification.message}
         </div>
       )}
+      {error && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" role="alert">
+          <span>{error}</span>
+          <div className="flex shrink-0 gap-3">
+            {canRetry && (
+              <button onClick={onRetry} className="accent-theme hover:opacity-80">
+                Retry
+              </button>
+            )}
+            <button onClick={onRefresh} className="accent-theme hover:opacity-80">
+              Refresh logs
+            </button>
+          </div>
+        </div>
+      )}
+
 
       {/* Virtualized list */}
       <div
@@ -578,7 +706,7 @@ export function LogViewer() {
         {hasMore && !isLoading && !isFollowing && (
           <div className="flex items-center justify-center py-4">
             <button
-              onClick={loadMore}
+              onClick={onLoadMore}
               className="text-sm accent-theme hover:opacity-80"
             >
               Load more...
@@ -592,7 +720,8 @@ export function LogViewer() {
         <div className="absolute bottom-4 right-4 z-10">
           <button
             onClick={() => {
-              scrollToLatest();
+              scrollToLatest(true);
+              setUserScrolled(false);
               resume();
             }}
             className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700

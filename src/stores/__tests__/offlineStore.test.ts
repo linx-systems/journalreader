@@ -14,8 +14,6 @@ vi.mock('../../lib/offlineTauri', () => ({
   getAllStorageStats: vi.fn(),
   getOfflineSettings: vi.fn(),
   updateOfflineSettings: vi.fn(),
-  isOfflineMode: vi.fn(),
-  setOfflineMode: vi.fn(),
   triggerSync: vi.fn(),
   cancelSync: vi.fn(),
   deleteOfflineLogs: vi.fn(),
@@ -26,8 +24,6 @@ import {
   getAllStorageStats,
   getOfflineSettings,
   updateOfflineSettings,
-  isOfflineMode,
-  setOfflineMode,
   triggerSync,
   cancelSync,
   deleteOfflineLogs,
@@ -37,8 +33,6 @@ const mockedGetAllSyncStates = vi.mocked(getAllSyncStates);
 const mockedGetAllStorageStats = vi.mocked(getAllStorageStats);
 const mockedGetOfflineSettings = vi.mocked(getOfflineSettings);
 const mockedUpdateOfflineSettings = vi.mocked(updateOfflineSettings);
-const mockedIsOfflineMode = vi.mocked(isOfflineMode);
-const mockedSetOfflineMode = vi.mocked(setOfflineMode);
 const mockedTriggerSync = vi.mocked(triggerSync);
 const mockedCancelSync = vi.mocked(cancelSync);
 const mockedDeleteOfflineLogs = vi.mocked(deleteOfflineLogs);
@@ -67,30 +61,11 @@ describe('initial state', () => {
 });
 
 describe('setOfflineMode', () => {
-  it('sets offline mode to true', async () => {
-    mockedSetOfflineMode.mockResolvedValueOnce(undefined);
-
-    await useOfflineStore.getState().setOfflineMode(true);
-
-    expect(mockedSetOfflineMode).toHaveBeenCalledWith(true);
+  it('updates persisted frontend mode synchronously', () => {
+    useOfflineStore.getState().setOfflineMode(true);
     expect(useOfflineStore.getState().isOfflineMode).toBe(true);
-  });
 
-  it('sets offline mode to false', async () => {
-    useOfflineStore.setState({ isOfflineMode: true });
-    mockedSetOfflineMode.mockResolvedValueOnce(undefined);
-
-    await useOfflineStore.getState().setOfflineMode(false);
-
-    expect(mockedSetOfflineMode).toHaveBeenCalledWith(false);
-    expect(useOfflineStore.getState().isOfflineMode).toBe(false);
-  });
-
-  it('reverts on error', async () => {
-    mockedSetOfflineMode.mockRejectedValueOnce(new Error('Failed'));
-    mockedIsOfflineMode.mockResolvedValueOnce(false);
-
-    await expect(useOfflineStore.getState().setOfflineMode(true)).rejects.toThrow('Failed');
+    useOfflineStore.getState().setOfflineMode(false);
     expect(useOfflineStore.getState().isOfflineMode).toBe(false);
   });
 });
@@ -296,6 +271,27 @@ describe('triggerSync', () => {
     expect(hostState?.syncError).toBe('Connection failed');
   });
 
+  it('keeps active progress when a concurrent sync start is rejected', async () => {
+    const activeProgress: SyncProgressEvent = {
+      hostId: 'host-a',
+      status: 'fetching',
+      entriesSynced: 50,
+      totalEntries: 100,
+      batchSize: 25,
+      error: null,
+    };
+    useOfflineStore.setState({ currentSync: activeProgress });
+    mockedTriggerSync.mockRejectedValueOnce(new Error('A sync is already running.'));
+
+    await expect(useOfflineStore.getState().triggerSync('host-b')).rejects.toThrow(
+      'A sync is already running.'
+    );
+
+    const state = useOfflineStore.getState();
+    expect(state.currentSync).toEqual(activeProgress);
+    expect(state.syncStates.has('host-b')).toBe(false);
+  });
+
   it('handles cancelled sync', async () => {
     const result: SyncResult = {
       hostId: 'host-1',
@@ -312,6 +308,57 @@ describe('triggerSync', () => {
 
     const hostState = useOfflineStore.getState().syncStates.get('host-1');
     expect(hostState?.syncStatus).toBe('never');
+  });
+});
+
+describe('rejected invalidated sync starts', () => {
+  it('clears the rejected optimistic start after its deletion invalidates it', async () => {
+    let rejectSync!: (error: Error) => void;
+    mockedTriggerSync.mockReturnValueOnce(
+      new Promise<SyncResult>((_resolve, reject) => {
+        rejectSync = reject;
+      })
+    );
+    mockedDeleteOfflineLogs.mockResolvedValueOnce(0);
+
+    const sync = useOfflineStore.getState().triggerSync('host-1');
+    await useOfflineStore.getState().deleteOfflineLogs('host-1');
+
+    rejectSync(new Error('Sync cancelled by deletion'));
+    await expect(sync).rejects.toThrow('Sync cancelled by deletion');
+
+    const state = useOfflineStore.getState();
+    expect(state.currentSync).toBeNull();
+    expect(state.invalidatedSyncHosts.has('host-1')).toBe(false);
+    expect(state.invalidatedSyncEpochs.has('host-1')).toBe(false);
+  });
+
+  it('does not clear a newer active run when a deleted attempt rejects', async () => {
+    let rejectSync!: (error: Error) => void;
+    mockedTriggerSync.mockReturnValueOnce(
+      new Promise<SyncResult>((_resolve, reject) => {
+        rejectSync = reject;
+      })
+    );
+    mockedDeleteOfflineLogs.mockResolvedValueOnce(0);
+
+    const sync = useOfflineStore.getState().triggerSync('host-1');
+    await useOfflineStore.getState().deleteOfflineLogs('host-1');
+
+    const newerProgress: SyncProgressEvent = {
+      hostId: 'host-1',
+      status: 'fetching',
+      entriesSynced: 10,
+      totalEntries: 10,
+      batchSize: 10,
+      error: null,
+    };
+    useOfflineStore.setState({ currentSync: newerProgress, currentSyncAttempt: null });
+
+    rejectSync(new Error('Sync cancelled by deletion'));
+    await expect(sync).rejects.toThrow('Sync cancelled by deletion');
+
+    expect(useOfflineStore.getState().currentSync).toEqual(newerProgress);
   });
 });
 
@@ -358,6 +405,140 @@ describe('deleteOfflineLogs', () => {
     expect(state.storageStats.has('host-1')).toBe(false);
     expect(state.syncStates.get('host-1')?.syncStatus).toBe('never');
     expect(state.syncStates.get('host-1')?.entriesSynced).toBe(0);
+  });
+
+  it('releases invalidation when the worker completes before deletion returns', async () => {
+    let resolveSync!: (result: SyncResult) => void;
+    let resolveDeletion!: (deleted: number) => void;
+    mockedTriggerSync.mockReturnValueOnce(
+      new Promise<SyncResult>((resolve) => {
+        resolveSync = resolve;
+      })
+    );
+    mockedDeleteOfflineLogs.mockReturnValueOnce(
+      new Promise<number>((resolve) => {
+        resolveDeletion = resolve;
+      })
+    );
+
+    const sync = useOfflineStore.getState().triggerSync('host-1');
+    const deletion = useOfflineStore.getState().deleteOfflineLogs('host-1');
+
+    resolveSync({
+      hostId: 'host-1',
+      success: false,
+      entriesSynced: 10,
+      totalEntries: 10,
+      error: null,
+      cancelled: true,
+    });
+    await sync;
+    expect(useOfflineStore.getState().invalidatedSyncHosts.has('host-1')).toBe(false);
+
+    resolveDeletion(1);
+    await deletion;
+
+    useOfflineStore.getState().updateSyncProgress({
+      hostId: 'host-1',
+      status: 'fetching',
+      entriesSynced: 11,
+      totalEntries: 11,
+      batchSize: 1,
+      error: null,
+    });
+    const state = useOfflineStore.getState();
+    expect(state.invalidatedSyncHosts.has('host-1')).toBe(false);
+    expect(state.syncStates.get('host-1')?.entriesSynced).toBe(11);
+  });
+
+  it('keeps invalidation until a late worker completes after deletion', async () => {
+    let resolveSync!: (result: SyncResult) => void;
+    mockedTriggerSync.mockReturnValueOnce(
+      new Promise<SyncResult>((resolve) => {
+        resolveSync = resolve;
+      })
+    );
+    mockedDeleteOfflineLogs.mockResolvedValueOnce(1);
+
+    const sync = useOfflineStore.getState().triggerSync('host-1');
+    await useOfflineStore.getState().deleteOfflineLogs('host-1');
+
+    useOfflineStore.getState().updateSyncProgress({
+      hostId: 'host-1',
+      status: 'fetching',
+      entriesSynced: 10,
+      totalEntries: 10,
+      batchSize: 10,
+      error: null,
+    });
+    expect(useOfflineStore.getState().syncStates.get('host-1')?.entriesSynced).toBe(0);
+    expect(useOfflineStore.getState().invalidatedSyncHosts.has('host-1')).toBe(true);
+
+    resolveSync({
+      hostId: 'host-1',
+      success: false,
+      entriesSynced: 10,
+      totalEntries: 10,
+      error: null,
+      cancelled: true,
+    });
+    await sync;
+
+    useOfflineStore.getState().updateSyncProgress({
+      hostId: 'host-1',
+      status: 'fetching',
+      entriesSynced: 12,
+      totalEntries: 12,
+      batchSize: 2,
+      error: null,
+    });
+    const state = useOfflineStore.getState();
+    expect(state.invalidatedSyncHosts.has('host-1')).toBe(false);
+    expect(state.syncStates.get('host-1')?.entriesSynced).toBe(12);
+    expect(state.currentSync?.hostId).toBe('host-1');
+  });
+
+  it('clears overlapping deletion invalidation when its owning worker finishes', async () => {
+    let resolveSync!: (result: SyncResult) => void;
+    let resolveFirstDeletion!: (deleted: number) => void;
+    let resolveSecondDeletion!: (deleted: number) => void;
+    mockedTriggerSync.mockReturnValueOnce(
+      new Promise<SyncResult>((resolve) => {
+        resolveSync = resolve;
+      })
+    );
+    mockedDeleteOfflineLogs
+      .mockReturnValueOnce(
+        new Promise<number>((resolve) => {
+          resolveFirstDeletion = resolve;
+        })
+      )
+      .mockReturnValueOnce(
+        new Promise<number>((resolve) => {
+          resolveSecondDeletion = resolve;
+        })
+      );
+
+    const sync = useOfflineStore.getState().triggerSync('host-1');
+    const firstDeletion = useOfflineStore.getState().deleteOfflineLogs('host-1');
+    const secondDeletion = useOfflineStore.getState().deleteOfflineLogs('host-1');
+
+    resolveSecondDeletion(1);
+    await secondDeletion;
+    resolveFirstDeletion(1);
+    await firstDeletion;
+    expect(useOfflineStore.getState().invalidatedSyncHosts.has('host-1')).toBe(true);
+
+    resolveSync({
+      hostId: 'host-1',
+      success: false,
+      entriesSynced: 10,
+      totalEntries: 10,
+      error: null,
+      cancelled: true,
+    });
+    await sync;
+    expect(useOfflineStore.getState().invalidatedSyncHosts.has('host-1')).toBe(false);
   });
 });
 

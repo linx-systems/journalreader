@@ -1,162 +1,170 @@
 import { create } from 'zustand';
-import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import type { JournalEntry, JournalFilter, FollowEvent, FollowErrorEvent } from '../lib/types';
-import { DEBOUNCE_MS } from '../lib/constants';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import type {
+  FollowErrorEvent,
+  FollowEvent,
+  FollowStoppedEvent,
+  JournalEntry,
+} from '../lib/types';
 
-export { DEBOUNCE_MS };
-
-/**
- * Centralized store for follow mode state management.
- *
- * This store replaces the module-level global variables that were previously
- * used in useFollowMode.ts, which caused race conditions when multiple
- * components mounted/unmounted simultaneously.
- *
- * The store provides:
- * - Atomic state updates via Zustand
- * - Proper cleanup tracking for Tauri event listeners
- * - Debounce and restart coordination without race conditions
- */
+export interface DesiredFollowSession {
+  hostId: string;
+  sessionId: string;
+}
 
 interface FollowModeState {
-  // Listener management
-  listenersSetUp: boolean;
+  desiredSession: DesiredFollowSession | null;
+  startupError: string | null;
   unlistenEntry: UnlistenFn | null;
   unlistenError: UnlistenFn | null;
   unlistenStopped: UnlistenFn | null;
-
-  // Filter change handling
-  lastFilter: JournalFilter | null;
-  restartInProgress: boolean;
-  debounceTimer: ReturnType<typeof setTimeout> | null;
-
-  // Actions
-  setListenersSetUp: (value: boolean) => void;
+  setDesiredSession: (session: DesiredFollowSession | null) => void;
+  setStartupError: (error: string | null) => void;
   setUnlistenFns: (entry: UnlistenFn | null, error: UnlistenFn | null, stopped: UnlistenFn | null) => void;
-  setLastFilter: (filter: JournalFilter | null) => void;
-  setRestartInProgress: (value: boolean) => void;
-  setDebounceTimer: (timer: ReturnType<typeof setTimeout> | null) => void;
-  clearDebounceTimer: () => void;
   cleanup: () => void;
 }
 
 export const useFollowModeStore = create<FollowModeState>((set, get) => ({
-  // Initial state
-  listenersSetUp: false,
+  desiredSession: null,
+  startupError: null,
   unlistenEntry: null,
   unlistenError: null,
   unlistenStopped: null,
-  lastFilter: null,
-  restartInProgress: false,
-  debounceTimer: null,
-
-  setListenersSetUp: (value) => set({ listenersSetUp: value }),
-
+  setDesiredSession: (desiredSession) => set({ desiredSession }),
+  setStartupError: (startupError) => set({ startupError }),
   setUnlistenFns: (entry, error, stopped) => set({
     unlistenEntry: entry,
     unlistenError: error,
     unlistenStopped: stopped,
   }),
-
-  setLastFilter: (filter) => set({ lastFilter: filter }),
-
-  setRestartInProgress: (value) => set({ restartInProgress: value }),
-
-  setDebounceTimer: (timer) => set({ debounceTimer: timer }),
-
-  clearDebounceTimer: () => {
-    const { debounceTimer } = get();
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      set({ debounceTimer: null });
-    }
-  },
-
   cleanup: () => {
-    const state = get();
-
-    // Clear debounce timer
-    if (state.debounceTimer) {
-      clearTimeout(state.debounceTimer);
-    }
-
-    // Call unlisten functions
-    if (state.unlistenEntry) {
-      state.unlistenEntry();
-    }
-    if (state.unlistenError) {
-      state.unlistenError();
-    }
-    if (state.unlistenStopped) {
-      state.unlistenStopped();
-    }
-
-    // Reset state
-    set({
-      listenersSetUp: false,
-      unlistenEntry: null,
-      unlistenError: null,
-      unlistenStopped: null,
-      debounceTimer: null,
-    });
+    const { unlistenEntry, unlistenError, unlistenStopped } = get();
+    unlistenEntry?.();
+    unlistenError?.();
+    unlistenStopped?.();
+    set({ unlistenEntry: null, unlistenError: null, unlistenStopped: null });
   },
 }));
 
-/**
- * Set up Tauri event listeners for follow mode.
- * This is idempotent - calling it multiple times is safe.
- */
-export async function setupListeners(
-  prependEntries: (entries: JournalEntry[]) => void,
-  setError: (error: string | null) => void,
-  setFollowing: (following: boolean) => void
-): Promise<void> {
-  const store = useFollowModeStore.getState();
-
-  // Already set up - no-op
-  if (store.listenersSetUp) return;
-
-  // Mark as setting up immediately to prevent concurrent setup
-  store.setListenersSetUp(true);
-
-  try {
-    const unlistenEntry = await listen<FollowEvent>(
-      'journal-follow-entry',
-      (event) => {
-        const { entries } = event.payload;
-        if (entries.length > 0) {
-          prependEntries(entries);
-        }
-      }
-    );
-
-    const unlistenError = await listen<FollowErrorEvent>(
-      'journal-follow-error',
-      (event) => {
-        setError(`Follow mode error: ${event.payload.message}`);
-        setFollowing(false);
-      }
-    );
-
-    const unlistenStopped = await listen(
-      'journal-follow-stopped',
-      () => {
-        setFollowing(false);
-      }
-    );
-
-    store.setUnlistenFns(unlistenEntry, unlistenError, unlistenStopped);
-  } catch (error) {
-    // Reset on failure so we can retry
-    store.setListenersSetUp(false);
-    throw error;
-  }
+interface FollowListenerCallbacks {
+  prependEntries: (entries: JournalEntry[]) => void;
+  setError: (error: string | null) => void;
+  setFollowing: (following: boolean) => void;
+  acceptsSession: (session: DesiredFollowSession) => boolean;
+  onTerminal: (session: DesiredFollowSession) => void;
 }
 
-/**
- * Clean up Tauri event listeners.
- * This is idempotent - calling it multiple times is safe.
- */
+let listenerSetup: Promise<void> | null = null;
+let listenerCallbacks: FollowListenerCallbacks | null = null;
+let listenerGeneration = 0;
+
+function matchesDesiredSession(hostId: string, sessionId: string): boolean {
+  const desired = useFollowModeStore.getState().desiredSession;
+  return desired?.hostId === hostId && desired.sessionId === sessionId;
+}
+
+/** Set up one shared listener set and refresh its session-bound callbacks. */
+export function setupListeners(
+  prependEntries: (entries: JournalEntry[]) => void,
+  setError: (error: string | null) => void,
+  setFollowing: (following: boolean) => void,
+  acceptsSession: (session: DesiredFollowSession) => boolean,
+  onTerminal: (session: DesiredFollowSession) => void,
+): Promise<void> {
+  listenerCallbacks = {
+    prependEntries,
+    setError,
+    setFollowing,
+    acceptsSession,
+    onTerminal,
+  };
+
+  const existing = useFollowModeStore.getState();
+  if (existing.unlistenEntry && existing.unlistenError && existing.unlistenStopped) {
+    return Promise.resolve();
+  }
+  if (listenerSetup) return listenerSetup;
+
+  const generation = listenerGeneration;
+  const setup = (async () => {
+    let unlistenEntry: UnlistenFn | null = null;
+    let unlistenError: UnlistenFn | null = null;
+    let unlistenStopped: UnlistenFn | null = null;
+    const cancelled = () => generation !== listenerGeneration;
+    const discard = () => {
+      unlistenEntry?.();
+      unlistenError?.();
+      unlistenStopped?.();
+    };
+
+    try {
+      unlistenEntry = await listen<FollowEvent>('journal-follow-entry', ({ payload }) => {
+        const callbacks = listenerCallbacks;
+        const session = { hostId: payload.hostId, sessionId: payload.sessionId };
+        if (
+          callbacks
+          && matchesDesiredSession(session.hostId, session.sessionId)
+          && callbacks.acceptsSession(session)
+          && payload.entries.length > 0
+        ) {
+          callbacks.prependEntries(payload.entries);
+        }
+      });
+      if (cancelled()) {
+        discard();
+        return;
+      }
+
+      unlistenError = await listen<FollowErrorEvent>('journal-follow-error', ({ payload }) => {
+        const callbacks = listenerCallbacks;
+        const session = { hostId: payload.hostId, sessionId: payload.sessionId };
+        if (
+          !callbacks
+          || !matchesDesiredSession(session.hostId, session.sessionId)
+          || !callbacks.acceptsSession(session)
+        ) return;
+        const message = `Follow mode error: ${payload.message}`;
+        useFollowModeStore.getState().setStartupError(message);
+        callbacks.setError(message);
+        callbacks.setFollowing(false);
+        callbacks.onTerminal(session);
+      });
+      if (cancelled()) {
+        discard();
+        return;
+      }
+
+      unlistenStopped = await listen<FollowStoppedEvent>('journal-follow-stopped', ({ payload }) => {
+        const callbacks = listenerCallbacks;
+        const session = { hostId: payload.hostId, sessionId: payload.sessionId };
+        if (
+          !callbacks
+          || !matchesDesiredSession(session.hostId, session.sessionId)
+          || !callbacks.acceptsSession(session)
+        ) return;
+        callbacks.setFollowing(false);
+        callbacks.onTerminal(session);
+      });
+      if (cancelled()) {
+        discard();
+        return;
+      }
+      useFollowModeStore.getState().setUnlistenFns(unlistenEntry, unlistenError, unlistenStopped);
+    } catch (error) {
+      discard();
+      if (!cancelled()) throw error;
+    }
+  })();
+
+  listenerSetup = setup;
+  return setup.finally(() => {
+    if (listenerSetup === setup) listenerSetup = null;
+  });
+}
+
 export function cleanupListeners(): void {
+  listenerGeneration += 1;
+  listenerCallbacks = null;
+  listenerSetup = null;
   useFollowModeStore.getState().cleanup();
 }

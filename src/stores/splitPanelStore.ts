@@ -6,6 +6,7 @@ import type { JournalEntry } from '../lib/types';
  */
 interface PanelState {
   entries: JournalEntry[];
+  resultGeneration: number;
   isLoading: boolean;
   error: string | null;
   hasMore: boolean;
@@ -17,6 +18,7 @@ interface PanelState {
  */
 const defaultPanelState: PanelState = {
   entries: [],
+  resultGeneration: 0,
   isLoading: false,
   error: null,
   hasMore: false,
@@ -89,7 +91,11 @@ export const useSplitPanelStore = create<SplitPanelStore>((set) => ({
 
   // Left panel actions
   setLeftEntries: (entries) => set((state) => ({
-    leftPanel: { ...state.leftPanel, entries },
+    leftPanel: {
+      ...state.leftPanel,
+      entries,
+      resultGeneration: state.leftPanel.resultGeneration + 1,
+    },
   })),
 
   appendLeftEntries: (newEntries) => set((state) => ({
@@ -122,13 +128,20 @@ export const useSplitPanelStore = create<SplitPanelStore>((set) => ({
     leftPanel: { ...state.leftPanel, cursorEnd },
   })),
 
-  clearLeftPanel: () => set(() => ({
-    leftPanel: { ...defaultPanelState },
+  clearLeftPanel: () => set((state) => ({
+    leftPanel: {
+      ...defaultPanelState,
+      resultGeneration: state.leftPanel.resultGeneration,
+    },
   })),
 
   // Right panel actions
   setRightEntries: (entries) => set((state) => ({
-    rightPanel: { ...state.rightPanel, entries },
+    rightPanel: {
+      ...state.rightPanel,
+      entries,
+      resultGeneration: state.rightPanel.resultGeneration + 1,
+    },
   })),
 
   appendRightEntries: (newEntries) => set((state) => ({
@@ -161,15 +174,24 @@ export const useSplitPanelStore = create<SplitPanelStore>((set) => ({
     rightPanel: { ...state.rightPanel, cursorEnd },
   })),
 
-  clearRightPanel: () => set(() => ({
-    rightPanel: { ...defaultPanelState },
+  clearRightPanel: () => set((state) => ({
+    rightPanel: {
+      ...defaultPanelState,
+      resultGeneration: state.rightPanel.resultGeneration,
+    },
   })),
 
   // Clear all
-  clearAllPanels: () => set({
-    leftPanel: { ...defaultPanelState },
-    rightPanel: { ...defaultPanelState },
-  }),
+  clearAllPanels: () => set((state) => ({
+    leftPanel: {
+      ...defaultPanelState,
+      resultGeneration: state.leftPanel.resultGeneration,
+    },
+    rightPanel: {
+      ...defaultPanelState,
+      resultGeneration: state.rightPanel.resultGeneration,
+    },
+  })),
 
   // Trigger refresh for all panels
   triggerRefresh: () => set((state) => ({

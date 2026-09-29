@@ -56,6 +56,21 @@ body {
   background-color: var(--color-background);
 }
 
+/* Native modal dialogs are promoted to the top layer; style their backdrop here. */
+.modal-dialog {
+  margin: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 2rem);
+  overflow: visible;
+}
+
+.modal-dialog::backdrop {
+  background: rgb(0 0 0 / 50%);
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

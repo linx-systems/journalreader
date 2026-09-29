@@ -6,7 +6,7 @@
 use crate::error::JournalError;
 use crate::journal::offline_db::OfflineDatabase;
 use crate::journal::offline_types::{OfflineSettings, StorageStats, SyncState, SyncStatus};
-use crate::journal::types::{JournalEntry, JournalFilter};
+use crate::journal::types::{JournalEntry, JournalFilter, JournalQueryResult};
 use rusqlite::{params, Row, ToSql};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,6 +22,7 @@ impl OfflineDatabase {
     /// Insert multiple journal entries for a host.
     /// Uses ON CONFLICT IGNORE to skip duplicates based on (host_id, cursor).
     /// Returns the number of entries actually inserted.
+    #[cfg(test)]
     pub fn insert_entries(
         &self,
         host_id: &str,
@@ -88,56 +89,204 @@ impl OfflineDatabase {
         Ok(inserted)
     }
 
-    /// Query journal entries for a host with filtering.
-    /// Returns entries matching the filter criteria.
-    pub fn query_entries(
+    /// Insert a sync batch and advance its checkpoint atomically.
+    ///
+    /// The caller's state is changed only after the transaction commits, so a
+    /// failed checkpoint write cannot leave entries ahead of the saved cursor.
+    pub fn insert_sync_batch(
+        &self,
+        host_id: &str,
+        entries: &[JournalEntry],
+        state: &mut SyncState,
+    ) -> Result<usize, JournalError> {
+        if entries.is_empty() {
+            return Ok(0);
+        }
+
+        let synced_at = now_millis();
+        let tx = self.conn.unchecked_transaction().map_err(|e| {
+            JournalError::ConfigError(format!("Failed to start sync batch transaction: {}", e))
+        })?;
+
+        let inserted = {
+            let mut stmt = tx
+                .prepare_cached(
+                    r#"
+                    INSERT OR IGNORE INTO journal_entries (
+                        host_id, cursor, realtime_timestamp, monotonic_timestamp, boot_id,
+                        message, priority, syslog_identifier, systemd_unit, pid, uid, gid,
+                        exe, cmdline, hostname, comm, synced_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                    "#,
+                )
+                .map_err(|e| {
+                    JournalError::ConfigError(format!("Failed to prepare sync batch insert: {}", e))
+                })?;
+
+            let mut inserted = 0;
+            for entry in entries {
+                inserted += stmt
+                    .execute(params![
+                        host_id,
+                        entry.cursor,
+                        entry.realtime_timestamp,
+                        entry.monotonic_timestamp,
+                        entry.boot_id,
+                        entry.message,
+                        entry.priority as i32,
+                        entry.syslog_identifier,
+                        entry.systemd_unit,
+                        entry.pid.map(|p| p as i64),
+                        entry.uid.map(|u| u as i64),
+                        entry.gid.map(|g| g as i64),
+                        entry.exe,
+                        entry.cmdline,
+                        entry.hostname,
+                        entry.comm,
+                        synced_at,
+                    ])
+                    .map_err(|e| {
+                        JournalError::ConfigError(format!("Failed to insert sync batch entry: {}", e))
+                    })?;
+            }
+            inserted
+        };
+
+        let mut updated_state = state.clone();
+        updated_state.host_id = host_id.to_string();
+        updated_state.last_cursor = entries.last().map(|entry| entry.cursor.clone());
+        updated_state.last_sync_timestamp = synced_at;
+        updated_state.entries_synced += inserted as i64;
+        tx.execute(
+            r#"
+            INSERT OR REPLACE INTO sync_state
+                (host_id, last_sync_timestamp, last_cursor, sync_status, sync_error, entries_synced)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                updated_state.host_id,
+                updated_state.last_sync_timestamp,
+                updated_state.last_cursor,
+                updated_state.sync_status.as_str(),
+                updated_state.sync_error,
+                updated_state.entries_synced,
+            ],
+        )
+        .map_err(|e| JournalError::ConfigError(format!("Failed to update sync checkpoint: {}", e)))?;
+
+        tx.commit().map_err(|e| {
+            JournalError::ConfigError(format!("Failed to commit sync batch transaction: {}", e))
+        })?;
+        *state = updated_state;
+
+        Ok(inserted)
+    }
+
+    /// Query one deterministic page of journal entries for a host.
+    pub fn query_page(
         &self,
         host_id: &str,
         filter: &JournalFilter,
-    ) -> Result<Vec<JournalEntry>, JournalError> {
-        let (sql, params) = self.build_query_sql(host_id, filter, false)?;
+    ) -> Result<JournalQueryResult, JournalError> {
+        if let Some(cursor) = filter.after_cursor.as_deref() {
+            self.ensure_page_cursor_exists(host_id, cursor)?;
+        }
+
+        let page_limit = if filter.limit == 0 {
+            500
+        } else {
+            filter.limit.min(10_000)
+        };
+        let (sql, params) = self.build_query_sql(host_id, filter, QueryKind::Page { page_limit })?;
 
         let mut stmt = self.conn.prepare(&sql).map_err(|e| {
-            JournalError::ConfigError(format!("Failed to prepare query: {}", e))
+            JournalError::ConfigError(format!("Failed to prepare page query: {}", e))
         })?;
-
-        let params_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
-
+        let param_refs: Vec<&dyn ToSql> = params.iter().map(|param| param.as_ref()).collect();
         let rows = stmt
-            .query_map(params_refs.as_slice(), |row: &Row| {
-                Ok(JournalEntry {
-                    cursor: row.get(0)?,
-                    realtime_timestamp: row.get(1)?,
-                    monotonic_timestamp: row.get(2)?,
-                    boot_id: row.get(3)?,
-                    message: row.get(4)?,
-                    priority: row.get::<_, i32>(5)? as u8,
-                    syslog_identifier: row.get(6)?,
-                    systemd_unit: row.get(7)?,
-                    pid: row.get::<_, Option<i64>>(8)?.map(|p| p as u32),
-                    uid: row.get::<_, Option<i64>>(9)?.map(|u| u as u32),
-                    gid: row.get::<_, Option<i64>>(10)?.map(|g| g as u32),
-                    exe: row.get(11)?,
-                    cmdline: row.get(12)?,
-                    hostname: row.get(13)?,
-                    comm: row.get(14)?,
-                })
-            })
-            .map_err(|e| JournalError::ConfigError(format!("Query failed: {}", e)))?;
+            .query_map(param_refs.as_slice(), entry_from_row)
+            .map_err(|e| JournalError::ConfigError(format!("Page query failed: {}", e)))?;
 
-        let mut entries = Vec::new();
-        for row_result in rows {
+        let mut entries = Vec::with_capacity(page_limit.saturating_add(1) as usize);
+        for row in rows {
             entries.push(
-                row_result.map_err(|e| JournalError::ConfigError(format!("Failed to read row: {}", e)))?,
+                row.map_err(|e| JournalError::ConfigError(format!("Failed to read row: {}", e)))?,
             );
         }
 
-        Ok(entries)
+        let has_more = entries.len() > page_limit as usize;
+        entries.truncate(page_limit as usize);
+        let cursor_start = entries.first().map(|entry| entry.cursor.clone());
+        let cursor_end = entries.last().map(|entry| entry.cursor.clone());
+
+        Ok(JournalQueryResult {
+            entries,
+            has_more,
+            cursor_start,
+            cursor_end,
+        })
+    }
+
+    fn ensure_page_cursor_exists(&self, host_id: &str, cursor: &str) -> Result<(), JournalError> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM journal_entries WHERE host_id = ? AND cursor = ?)",
+                params![host_id, cursor],
+                |row| row.get(0),
+            )
+            .map_err(|error| {
+                JournalError::ConfigError(format!("Failed to resolve cached page cursor: {error}"))
+            })?;
+
+        if exists {
+            Ok(())
+        } else {
+            Err(JournalError::ExecutionError(
+                "Cached page cursor expired; refresh logs.".into(),
+            ))
+        }
+    }
+
+    /// Visit every matching entry in chronological order without buffering the result set.
+    ///
+    /// Paging controls are intentionally ignored so callers such as exports receive the
+    /// complete filtered snapshot.
+    pub fn visit_entries<F>(
+        &self,
+        host_id: &str,
+        filter: &JournalFilter,
+        mut emit: F,
+    ) -> Result<u64, JournalError>
+    where
+        F: FnMut(&JournalEntry) -> Result<(), JournalError>,
+    {
+        let (sql, params) = self.build_query_sql(host_id, filter, QueryKind::Visitor)?;
+        let mut stmt = self.conn.prepare(&sql).map_err(|e| {
+            JournalError::ConfigError(format!("Failed to prepare streaming query: {}", e))
+        })?;
+        let param_refs: Vec<&dyn ToSql> = params.iter().map(|param| param.as_ref()).collect();
+        let mut rows = stmt
+            .query(param_refs.as_slice())
+            .map_err(|e| JournalError::ConfigError(format!("Streaming query failed: {}", e)))?;
+
+        let mut visited = 0;
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| JournalError::ConfigError(format!("Failed to read row: {}", e)))?
+        {
+            let entry = entry_from_row(row)
+                .map_err(|e| JournalError::ConfigError(format!("Failed to decode row: {}", e)))?;
+            emit(&entry)?;
+            visited += 1;
+        }
+
+        Ok(visited)
     }
 
     /// Count entries matching the filter criteria.
     pub fn count_entries(&self, host_id: &str, filter: &JournalFilter) -> Result<i64, JournalError> {
-        let (sql, params) = self.build_query_sql(host_id, filter, true)?;
+        let (sql, params) = self.build_query_sql(host_id, filter, QueryKind::Count)?;
 
         let params_refs: Vec<&dyn ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -402,154 +551,168 @@ impl OfflineDatabase {
         Ok(())
     }
 
-    /// Build SQL query from filter.
-    /// If `count_only` is true, returns a COUNT query instead of SELECT.
+    /// Build the SQL and bound parameters for an offline query.
     fn build_query_sql(
         &self,
         host_id: &str,
         filter: &JournalFilter,
-        count_only: bool,
+        kind: QueryKind,
     ) -> Result<(String, Vec<Box<dyn ToSql>>), JournalError> {
-        let mut conditions: Vec<String> = vec!["host_id = ?".to_string()];
+        let mut conditions = vec!["journal_entries.host_id = ?".to_string()];
         let mut params: Vec<Box<dyn ToSql>> = vec![Box::new(host_id.to_string())];
 
-        // Units filter
         if !filter.units.is_empty() {
-            let placeholders: Vec<&str> = filter.units.iter().map(|_| "?").collect();
-            conditions.push(format!("systemd_unit IN ({})", placeholders.join(", ")));
-            for unit in &filter.units {
-                params.push(Box::new(unit.clone()));
-            }
+            let placeholders = vec!["?"; filter.units.len()].join(", ");
+            conditions.push(format!("journal_entries.systemd_unit IN ({placeholders})"));
+            params.extend(filter.units.iter().cloned().map(|unit| Box::new(unit) as Box<dyn ToSql>));
         }
 
-        // Excluded units filter
         if !filter.excluded_units.is_empty() {
-            let placeholders: Vec<&str> = filter.excluded_units.iter().map(|_| "?").collect();
-            conditions.push(format!("systemd_unit NOT IN ({})", placeholders.join(", ")));
-            for unit in &filter.excluded_units {
-                params.push(Box::new(unit.clone()));
-            }
+            let placeholders = vec!["?"; filter.excluded_units.len()].join(", ");
+            conditions.push(format!(
+                "(journal_entries.systemd_unit IS NULL OR journal_entries.systemd_unit NOT IN ({placeholders}))"
+            ));
+            params.extend(
+                filter
+                    .excluded_units
+                    .iter()
+                    .cloned()
+                    .map(|unit| Box::new(unit) as Box<dyn ToSql>),
+            );
         }
 
-        // Priorities filter
         if !filter.priorities.is_empty() {
-            let placeholders: Vec<&str> = filter.priorities.iter().map(|_| "?").collect();
-            conditions.push(format!("priority IN ({})", placeholders.join(", ")));
-            for priority in &filter.priorities {
-                params.push(Box::new(*priority as i32));
-            }
+            let placeholders = vec!["?"; filter.priorities.len()].join(", ");
+            conditions.push(format!("journal_entries.priority IN ({placeholders})"));
+            params.extend(
+                filter
+                    .priorities
+                    .iter()
+                    .map(|priority| Box::new(*priority as i32) as Box<dyn ToSql>),
+            );
         }
 
-        // Since timestamp - parse ISO 8601 date string to microseconds
         if let Some(since) = &filter.since {
-            if let Ok(ts) = parse_timestamp(since) {
-                conditions.push("realtime_timestamp >= ?".to_string());
-                params.push(Box::new(ts));
+            if let Ok(timestamp) = parse_timestamp(since) {
+                conditions.push("journal_entries.realtime_timestamp >= ?".to_string());
+                params.push(Box::new(timestamp));
             }
         }
 
-        // Until timestamp
         if let Some(until) = &filter.until {
-            if let Ok(ts) = parse_timestamp(until) {
-                conditions.push("realtime_timestamp <= ?".to_string());
-                params.push(Box::new(ts));
+            if let Ok(timestamp) = parse_timestamp(until) {
+                conditions.push("journal_entries.realtime_timestamp <= ?".to_string());
+                params.push(Box::new(timestamp));
             }
         }
 
-        // Boot ID filter
         if let Some(boot_id) = &filter.boot_id {
-            conditions.push("boot_id = ?".to_string());
+            conditions.push("journal_entries.boot_id = ?".to_string());
             params.push(Box::new(boot_id.clone()));
         }
 
-        // Identifier filter (syslog_identifier)
         if let Some(identifier) = &filter.identifier {
-            conditions.push("syslog_identifier = ?".to_string());
+            conditions.push("journal_entries.syslog_identifier = ?".to_string());
             params.push(Box::new(identifier.clone()));
         }
 
-        // After cursor for pagination
-        if let Some(cursor) = &filter.after_cursor {
-            // Get the timestamp of the cursor entry for proper pagination
-            conditions.push("cursor > ?".to_string());
-            params.push(Box::new(cursor.clone()));
-        }
+        let page_limit = match kind {
+            QueryKind::Page { page_limit } => {
+                if let Some(cursor) = &filter.after_cursor {
+                    let comparison = if filter.reverse { "<" } else { ">" };
+                    conditions.push(format!(
+                        "(journal_entries.realtime_timestamp, journal_entries.cursor) {comparison} \
+                         (SELECT realtime_timestamp, cursor FROM journal_entries \
+                          WHERE host_id = ? AND cursor = ?)"
+                    ));
+                    params.push(Box::new(host_id.to_string()));
+                    params.push(Box::new(cursor.clone()));
+                }
+                Some(page_limit)
+            }
+            QueryKind::Count | QueryKind::Visitor => None,
+        };
 
-        // Grep pattern - use FTS5 if available, fall back to LIKE
-        let use_fts = filter.grep_pattern.is_some();
-        let mut fts_join = String::new();
-
-        if let Some(pattern) = &filter.grep_pattern {
-            // For FTS5, we need to escape special characters and use MATCH
-            // But for safety, we'll use LIKE for complex patterns
+        let mut fts_join = "";
+        if let Some(pattern) = filter.grep_pattern.as_deref().filter(|pattern| !pattern.is_empty()) {
             if is_simple_pattern(pattern) {
-                // Use FTS5 for simple patterns
-                fts_join = " INNER JOIN journal_entries_fts ON journal_entries.id = journal_entries_fts.rowid".to_string();
+                fts_join =
+                    " INNER JOIN journal_entries_fts ON journal_entries.id = journal_entries_fts.rowid";
                 conditions.push("journal_entries_fts.message MATCH ?".to_string());
-                // FTS5 requires proper escaping - wrap in quotes for phrase search
-                let fts_pattern = format!("\"{}\"", pattern.replace('"', "\"\""));
-                params.push(Box::new(fts_pattern));
+                params.push(Box::new(format!("\"{}\"", pattern.replace('"', "\"\""))));
             } else {
-                // Fall back to LIKE for complex patterns
-                conditions.push(if filter.case_sensitive {
-                    "message LIKE ? ESCAPE '\\'".to_string()
+                let collation = if filter.case_sensitive {
+                    ""
                 } else {
-                    "message LIKE ? ESCAPE '\\' COLLATE NOCASE".to_string()
-                });
-                // Convert grep pattern to SQL LIKE pattern
-                let like_pattern = format!("%{}%", escape_like_pattern(pattern));
-                params.push(Box::new(like_pattern));
+                    " COLLATE NOCASE"
+                };
+                conditions.push(format!(
+                    "journal_entries.message LIKE ? ESCAPE '\\'{}",
+                    collation
+                ));
+                params.push(Box::new(format!("%{}%", escape_like_pattern(pattern))));
             }
         }
 
         let where_clause = conditions.join(" AND ");
-
-        let sql = if count_only {
-            format!(
-                "SELECT COUNT(*) FROM journal_entries{} WHERE {}",
-                fts_join, where_clause
-            )
-        } else {
-            let order = if filter.reverse { "DESC" } else { "ASC" };
-            // Handle limit 0 as "use default" (500), and cap at 10k for safety
-            let limit = if filter.limit == 0 { 500 } else { filter.limit.min(10000) };
-
-            if use_fts && fts_join.is_empty() {
-                // Using LIKE fallback
+        let sql = match page_limit {
+            Some(page_limit) => {
+                let order = if filter.reverse { "DESC" } else { "ASC" };
+                params.push(Box::new(i64::from(page_limit) + 1));
                 format!(
-                    r#"
-                    SELECT cursor, realtime_timestamp, monotonic_timestamp, boot_id,
-                           message, priority, syslog_identifier, systemd_unit,
-                           pid, uid, gid, exe, cmdline, hostname, comm
-                    FROM journal_entries
-                    WHERE {}
-                    ORDER BY realtime_timestamp {}
-                    LIMIT {}
-                    "#,
-                    where_clause, order, limit
-                )
-            } else {
-                format!(
-                    r#"
-                    SELECT journal_entries.cursor, journal_entries.realtime_timestamp,
-                           journal_entries.monotonic_timestamp, journal_entries.boot_id,
-                           journal_entries.message, journal_entries.priority,
-                           journal_entries.syslog_identifier, journal_entries.systemd_unit,
-                           journal_entries.pid, journal_entries.uid, journal_entries.gid,
-                           journal_entries.exe, journal_entries.cmdline,
-                           journal_entries.hostname, journal_entries.comm
-                    FROM journal_entries{}
-                    WHERE {}
-                    ORDER BY journal_entries.realtime_timestamp {}
-                    LIMIT {}
-                    "#,
-                    fts_join, where_clause, order, limit
+                    "{ENTRY_SELECT} FROM journal_entries{fts_join} WHERE {where_clause} \
+                     ORDER BY journal_entries.realtime_timestamp {order}, journal_entries.cursor {order} LIMIT ?"
                 )
             }
+            None => match kind {
+                QueryKind::Count => {
+                    format!("SELECT COUNT(*) FROM journal_entries{fts_join} WHERE {where_clause}")
+                }
+                QueryKind::Visitor => format!(
+                    "{ENTRY_SELECT} FROM journal_entries{fts_join} WHERE {where_clause} \
+                     ORDER BY journal_entries.realtime_timestamp ASC, journal_entries.cursor ASC"
+                ),
+                QueryKind::Page { .. } => unreachable!("page queries always have a limit"),
+            },
         };
 
         Ok((sql, params))
     }
+}
+
+#[derive(Clone, Copy)]
+enum QueryKind {
+    Count,
+    Page { page_limit: u32 },
+    Visitor,
+}
+
+const ENTRY_SELECT: &str = "\
+SELECT journal_entries.cursor, journal_entries.realtime_timestamp, \
+journal_entries.monotonic_timestamp, journal_entries.boot_id, \
+journal_entries.message, journal_entries.priority, \
+journal_entries.syslog_identifier, journal_entries.systemd_unit, \
+journal_entries.pid, journal_entries.uid, journal_entries.gid, \
+journal_entries.exe, journal_entries.cmdline, journal_entries.hostname, journal_entries.comm";
+
+fn entry_from_row(row: &Row<'_>) -> rusqlite::Result<JournalEntry> {
+    Ok(JournalEntry {
+        cursor: row.get(0)?,
+        realtime_timestamp: row.get(1)?,
+        monotonic_timestamp: row.get(2)?,
+        boot_id: row.get(3)?,
+        message: row.get(4)?,
+        priority: row.get::<_, i32>(5)? as u8,
+        syslog_identifier: row.get(6)?,
+        systemd_unit: row.get(7)?,
+        pid: row.get::<_, Option<i64>>(8)?.map(|value| value as u32),
+        uid: row.get::<_, Option<i64>>(9)?.map(|value| value as u32),
+        gid: row.get::<_, Option<i64>>(10)?.map(|value| value as u32),
+        exe: row.get(11)?,
+        cmdline: row.get(12)?,
+        hostname: row.get(13)?,
+        comm: row.get(14)?,
+    })
 }
 
 /// Check if a pattern is simple enough for FTS5 (no regex metacharacters)
@@ -683,7 +846,53 @@ mod tests {
     }
 
     #[test]
-    fn test_query_entries_no_filter() {
+    fn sync_batch_commits_entries_and_checkpoint_together() {
+        let (db, _temp_dir) = create_test_db();
+        let entries = vec![
+            sample_entry("cur1", "first", 1),
+            sample_entry("cur2", "second", 2),
+        ];
+        let mut state = SyncState {
+            host_id: "host1".to_string(),
+            sync_status: SyncStatus::InProgress,
+            ..Default::default()
+        };
+
+        assert_eq!(db.insert_sync_batch("host1", &entries, &mut state).unwrap(), 2);
+        assert_eq!(state.last_cursor.as_deref(), Some("cur2"));
+        assert_eq!(state.entries_synced, 2);
+        assert_eq!(db.get_storage_stats("host1").unwrap().entry_count, 2);
+        assert_eq!(db.get_sync_state("host1").unwrap().last_cursor.as_deref(), Some("cur2"));
+
+        assert_eq!(db.insert_sync_batch("host1", &entries, &mut state).unwrap(), 0);
+        assert_eq!(state.entries_synced, 2);
+        assert_eq!(state.last_cursor.as_deref(), Some("cur2"));
+    }
+
+    #[test]
+    fn checkpoint_failure_rolls_back_the_entire_sync_batch() {
+        let (db, _temp_dir) = create_test_db();
+        db.conn
+            .execute_batch(
+                "CREATE TRIGGER fail_checkpoint BEFORE INSERT ON sync_state \
+                 BEGIN SELECT RAISE(FAIL, 'checkpoint failure'); END;",
+            )
+            .unwrap();
+        let mut state = SyncState {
+            host_id: "host1".to_string(),
+            sync_status: SyncStatus::InProgress,
+            ..Default::default()
+        };
+        let entries = vec![sample_entry("cur1", "first", 1)];
+
+        assert!(db.insert_sync_batch("host1", &entries, &mut state).is_err());
+        assert_eq!(db.get_storage_stats("host1").unwrap().entry_count, 0);
+        assert!(state.last_cursor.is_none());
+        assert_eq!(state.entries_synced, 0);
+    }
+
+    #[test]
+    fn test_query_page_no_filter() {
         let (db, _temp_dir) = create_test_db();
 
         let entries = vec![
@@ -693,12 +902,12 @@ mod tests {
         db.insert_entries("host1", &entries).unwrap();
 
         let filter = JournalFilter::default();
-        let results = db.query_entries("host1", &filter).unwrap();
+        let results = db.query_page("host1", &filter).unwrap().entries;
         assert_eq!(results.len(), 2);
     }
 
     #[test]
-    fn test_query_entries_by_priority() {
+    fn test_query_page_by_priority() {
         let (db, _temp_dir) = create_test_db();
 
         let mut entry1 = sample_entry("cur1", "Error message", 1000000);
@@ -711,13 +920,13 @@ mod tests {
         let mut filter = JournalFilter::default();
         filter.priorities = vec![3];
 
-        let results = db.query_entries("host1", &filter).unwrap();
+        let results = db.query_page("host1", &filter).unwrap().entries;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].cursor, "cur1");
     }
 
     #[test]
-    fn test_query_entries_by_unit() {
+    fn test_query_page_by_unit() {
         let (db, _temp_dir) = create_test_db();
 
         let mut entry1 = sample_entry("cur1", "Service A log", 1000000);
@@ -730,7 +939,7 @@ mod tests {
         let mut filter = JournalFilter::default();
         filter.units = vec!["serviceA.service".to_string()];
 
-        let results = db.query_entries("host1", &filter).unwrap();
+        let results = db.query_page("host1", &filter).unwrap().entries;
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].systemd_unit,
@@ -739,7 +948,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_entries_excluded_units() {
+    fn test_query_page_excluded_units() {
         let (db, _temp_dir) = create_test_db();
 
         let mut entry1 = sample_entry("cur1", "Service A log", 1000000);
@@ -752,7 +961,7 @@ mod tests {
         let mut filter = JournalFilter::default();
         filter.excluded_units = vec!["serviceA.service".to_string()];
 
-        let results = db.query_entries("host1", &filter).unwrap();
+        let results = db.query_page("host1", &filter).unwrap().entries;
         assert_eq!(results.len(), 1);
         assert_eq!(
             results[0].systemd_unit,
@@ -761,7 +970,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_entries_by_boot_id() {
+    fn test_query_page_by_boot_id() {
         let (db, _temp_dir) = create_test_db();
 
         let mut entry1 = sample_entry("cur1", "Boot 1 log", 1000000);
@@ -774,13 +983,13 @@ mod tests {
         let mut filter = JournalFilter::default();
         filter.boot_id = Some("boot-1".to_string());
 
-        let results = db.query_entries("host1", &filter).unwrap();
+        let results = db.query_page("host1", &filter).unwrap().entries;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].boot_id, "boot-1");
     }
 
     #[test]
-    fn test_query_entries_with_grep_pattern() {
+    fn test_query_page_with_grep_pattern() {
         let (db, _temp_dir) = create_test_db();
 
         let entries = vec![
@@ -793,12 +1002,12 @@ mod tests {
         let mut filter = JournalFilter::default();
         filter.grep_pattern = Some("error".to_string());
 
-        let results = db.query_entries("host1", &filter).unwrap();
+        let results = db.query_page("host1", &filter).unwrap().entries;
         assert_eq!(results.len(), 2);
     }
 
     #[test]
-    fn test_query_entries_pagination() {
+    fn test_query_page_pagination() {
         let (db, _temp_dir) = create_test_db();
 
         let entries: Vec<JournalEntry> = (0..10)
@@ -810,9 +1019,155 @@ mod tests {
         filter.limit = 5;
         filter.reverse = false;
 
-        let results = db.query_entries("host1", &filter).unwrap();
-        assert_eq!(results.len(), 5);
-        assert_eq!(results[0].cursor, "cur0");
+        let result = db.query_page("host1", &filter).unwrap();
+        assert!(result.has_more);
+        assert_eq!(result.entries.len(), 5);
+        assert_eq!(result.entries[0].cursor, "cur0");
+    }
+
+    #[test]
+    fn test_query_page_paginates_by_timestamp_and_cursor() {
+        let (db, _temp_dir) = create_test_db();
+        let entries = vec![
+            sample_entry("cursor-a", "First", 1_000_000),
+            sample_entry("cursor-b", "Second", 1_000_000),
+            sample_entry("cursor-c", "Third", 1_000_001),
+        ];
+        db.insert_entries("host1", &entries).unwrap();
+
+        let filter = JournalFilter {
+            after_cursor: Some("cursor-a".to_string()),
+            limit: 10,
+            reverse: false,
+            ..Default::default()
+        };
+        let result = db.query_page("host1", &filter).unwrap();
+
+        assert_eq!(
+            result.entries.iter().map(|entry| entry.cursor.as_str()).collect::<Vec<_>>(),
+            vec!["cursor-b", "cursor-c"]
+        );
+    }
+
+    #[test]
+    fn test_query_page_visits_tuple_order_once_in_both_directions() {
+        let (db, _temp_dir) = create_test_db();
+        db.insert_entries(
+            "host-a",
+            &[
+                sample_entry("z", "first", 100),
+                sample_entry("a", "second", 200),
+                sample_entry("m", "third", 200),
+            ],
+        )
+        .unwrap();
+        db.insert_entries("host-b", &[sample_entry("z", "other host", 999)]).unwrap();
+
+        let mut forward = JournalFilter {
+            limit: 1,
+            reverse: false,
+            ..Default::default()
+        };
+        let first = db.query_page("host-a", &forward).unwrap();
+        assert_eq!(first.entries[0].cursor, "z");
+        assert!(first.has_more);
+        forward.after_cursor = first.cursor_end;
+        let second = db.query_page("host-a", &forward).unwrap();
+        assert_eq!(second.entries[0].cursor, "a");
+        forward.after_cursor = second.cursor_end;
+        let final_page = db.query_page("host-a", &forward).unwrap();
+        assert_eq!(final_page.entries[0].cursor, "m");
+        assert!(!final_page.has_more);
+
+        let mut reverse = JournalFilter {
+            limit: 1,
+            reverse: true,
+            ..Default::default()
+        };
+        let newest = db.query_page("host-a", &reverse).unwrap();
+        assert_eq!(newest.entries[0].cursor, "m");
+        reverse.after_cursor = newest.cursor_end;
+        let middle = db.query_page("host-a", &reverse).unwrap();
+        assert_eq!(middle.entries[0].cursor, "a");
+        reverse.after_cursor = middle.cursor_end;
+        let oldest = db.query_page("host-a", &reverse).unwrap();
+        assert_eq!(oldest.entries[0].cursor, "z");
+        assert!(!oldest.has_more);
+    }
+
+    #[test]
+    fn test_query_page_rejects_missing_or_foreign_anchor() {
+        let (db, _temp_dir) = create_test_db();
+        db.insert_entries("host-a", &[sample_entry("a", "entry", 100)]).unwrap();
+        db.insert_entries("host-b", &[sample_entry("b", "entry", 200)]).unwrap();
+
+        for cursor in ["missing", "b"] {
+            let error = match db.query_page(
+                "host-a",
+                &JournalFilter {
+                    after_cursor: Some(cursor.to_string()),
+                    ..Default::default()
+                },
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("missing cursor should fail"),
+            };
+            assert!(matches!(
+                error,
+                JournalError::ExecutionError(message)
+                    if message == "Cached page cursor expired; refresh logs."
+            ));
+        }
+    }
+
+    #[test]
+    fn test_query_page_exclusion_keeps_unitless_records() {
+        let (db, _temp_dir) = create_test_db();
+        let mut excluded = sample_entry("excluded", "excluded", 100);
+        excluded.systemd_unit = Some("skip.service".to_string());
+        let unitless = sample_entry("unitless", "kept", 101);
+        db.insert_entries("host", &[excluded, unitless]).unwrap();
+
+        let result = db
+            .query_page(
+                "host",
+                &JournalFilter {
+                    excluded_units: vec!["skip.service".to_string()],
+                    reverse: false,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].cursor, "unitless");
+    }
+
+    #[test]
+    fn test_visit_entries_is_chronological_and_ignores_page_controls() {
+        let (db, _temp_dir) = create_test_db();
+        let entries = vec![
+            sample_entry("cursor-c", "Third", 1_000_002),
+            sample_entry("cursor-a", "First", 1_000_000),
+            sample_entry("cursor-b", "Second", 1_000_001),
+        ];
+        db.insert_entries("host1", &entries).unwrap();
+
+        let filter = JournalFilter {
+            after_cursor: Some("cursor-b".to_string()),
+            limit: 1,
+            reverse: true,
+            ..Default::default()
+        };
+        let mut cursors = Vec::new();
+        let visited = db
+            .visit_entries("host1", &filter, |entry| {
+                cursors.push(entry.cursor.clone());
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(visited, 3);
+        assert_eq!(cursors, vec!["cursor-a", "cursor-b", "cursor-c"]);
     }
 
     #[test]
@@ -940,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_entries_host_isolation() {
+    fn test_query_page_host_isolation() {
         let (db, _temp_dir) = create_test_db();
 
         // Insert entries for two different hosts
@@ -952,7 +1307,7 @@ mod tests {
 
         // Query should only return entries for requested host
         let filter = JournalFilter::default();
-        let results = db.query_entries("host1", &filter).unwrap();
+        let results = db.query_page("host1", &filter).unwrap().entries;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].message, "Host 1 message");
     }

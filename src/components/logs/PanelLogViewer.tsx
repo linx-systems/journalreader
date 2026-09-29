@@ -1,8 +1,11 @@
-import { useRef, useCallback, useState, useEffect, useMemo } from 'react';
+import { useRef, useCallback, useState, useEffect, useLayoutEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { usePanelJournalLogs, type PanelPosition } from '../../hooks/usePanelJournalLogs';
 import { useFilterStore } from '../../stores/filterStore';
+import { LOCAL_TAB_ID, useConnectionStore } from '../../stores/connectionStore';
+import { useOfflineStore } from '../../stores/offlineStore';
 import { useScrollSyncStore } from '../../stores/scrollSyncStore';
+import { useSplitPanelStore } from '../../stores/splitPanelStore';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 import { findEntryIndexByTimestamp, getVisibleTimestamp } from '../../lib/scrollSync';
 import { LogEntryRow } from './LogEntry';
@@ -30,27 +33,89 @@ interface PanelLogViewerProps {
  */
 export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
   const parentRef = useRef<HTMLDivElement>(null);
-  const { entries, isLoading, error, hasMore, loadMore } = usePanelJournalLogs({
+  const {
+    entries,
+    isLoading,
+    error,
+    hasMore,
+    loadMore,
+    refresh,
+    retry,
+    canRetry,
+  } = usePanelJournalLogs({
     hostId,
     panelPosition,
   });
-  const { filter } = useFilterStore();
+  const filter = useFilterStore((state) => state.filter);
+  const connectedHostId = useConnectionStore((state) => state.connectedHostId);
+  const connectionStatus = useConnectionStore((state) => state.connectionStatus);
+  const isOfflineMode = useOfflineStore((state) => state.isOfflineMode);
   const { syncEnabled, anchorTimestamp, sourceTabId, syncVersion, broadcastTimestamp } = useScrollSyncStore();
+  const panelResultGeneration = useSplitPanelStore((state) => (
+    panelPosition === 'left'
+      ? state.leftPanel.resultGeneration
+      : state.rightPanel.resultGeneration
+  ));
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const [exportNotification, setExportNotification] = useState<LogExportResult | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const sourceIdentity = hostId === LOCAL_TAB_ID
+    ? 'local'
+    : `${hostId}:${connectedHostId === hostId && connectionStatus === 'connected' && !isOfflineMode ? 'remote' : 'cached'}`;
+  const replacementIdentity = `${sourceIdentity}:${JSON.stringify(filter)}:${panelResultGeneration}`;
 
-  // Track last processed sync version to avoid duplicate scrolls
-  const lastProcessedSyncVersion = useRef(0);
-  // Track if we're currently syncing to avoid echo loops
+  const exportNotificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const syncResetFrameRef = useRef<number | null>(null);
+  const syncObservedScrollTopRef = useRef<number | null>(null);
+  const syncPreviousScrollTopRef = useRef<number | null>(null);
+  const syncStableFramesRef = useRef(0);
+  const scrollSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSyncScrolling = useRef(false);
+  const suppressNextSyncScrollRef = useRef(false);
+
+  const cancelScheduledScrollWork = useCallback(() => {
+    const parent = parentRef.current;
+    const wasSyncScrolling = isSyncScrolling.current;
+    const hasPendingSyncScroll =
+      wasSyncScrolling
+      && syncObservedScrollTopRef.current !== null
+      && parent !== null
+      && parent.scrollTop !== syncObservedScrollTopRef.current;
+    if (scrollFrameRef.current !== null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+    }
+    if (syncResetFrameRef.current !== null) {
+      cancelAnimationFrame(syncResetFrameRef.current);
+      syncResetFrameRef.current = null;
+    }
+    isSyncScrolling.current = false;
+    syncObservedScrollTopRef.current = null;
+    syncPreviousScrollTopRef.current = null;
+    syncStableFramesRef.current = 0;
+    if (wasSyncScrolling) suppressNextSyncScrollRef.current = hasPendingSyncScroll;
+    if (scrollSyncTimeoutRef.current) {
+      clearTimeout(scrollSyncTimeoutRef.current);
+      scrollSyncTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    if (exportNotificationTimeoutRef.current) {
+      clearTimeout(exportNotificationTimeoutRef.current);
+    }
+    cancelScheduledScrollWork();
+  }, [cancelScheduledScrollWork]);
 
   const handleExportComplete = useCallback((result: LogExportResult) => {
     setExportNotification(result);
-    setTimeout(() => setExportNotification(null), 3000);
+    if (exportNotificationTimeoutRef.current) {
+      clearTimeout(exportNotificationTimeoutRef.current);
+    }
+    exportNotificationTimeoutRef.current = setTimeout(() => setExportNotification(null), 3000);
   }, []);
 
-  // Consolidated state ref for scroll/anchor management
   const viewerState = useRef<ViewerState>({
     prevEntriesLength: entries.length,
     isScrolling: false,
@@ -58,69 +123,23 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
     lastExpandedCursor: null,
   });
 
-  // Keep entries ref for getItemKey
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
 
-  const getItemKey = useCallback((index: number) => {
-    return entriesRef.current[index]?.cursor ?? index;
-  }, []);
+  const getItemKey = useCallback((index: number) => (
+    entriesRef.current[index]?.cursor ?? index
+  ), []);
 
   const rowVirtualizer = useVirtualizer({
     count: entries.length,
     getScrollElement: () => parentRef.current,
     getItemKey,
-    estimateSize: () => 48,
+    estimateSize: () => 41,
     overscan: 10,
-    measureElement: (element) => element?.getBoundingClientRect().height ?? 48,
+    measureElement: (element) => element?.getBoundingClientRect().height ?? 41,
   });
 
-  // Handle keyboard navigation toggle expand by index
-  const handleKeyboardToggleExpand = useCallback((index: number) => {
-    const entry = entries[index];
-    if (entry) {
-      const cursor = entry.cursor;
-      if (parentRef.current) {
-        const parent = parentRef.current;
-        const anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
-        if (anchorEl) {
-          const parentRect = parent.getBoundingClientRect();
-          const anchorRect = anchorEl.getBoundingClientRect();
-          viewerState.current.anchor = {
-            cursor,
-            offset: anchorRect.top - parentRect.top,
-          };
-        }
-      }
-      setExpandedRows((prev) => {
-        const next = new Set(prev);
-        if (next.has(cursor)) {
-          next.delete(cursor);
-        } else {
-          next.add(cursor);
-          viewerState.current.lastExpandedCursor = cursor;
-        }
-        return next;
-      });
-    }
-  }, [entries]);
-
-  // Keyboard navigation for log list
-  useKeyboardNavigation({
-    itemCount: entries.length,
-    selectedIndex,
-    onSelectionChange: setSelectedIndex,
-    onToggleExpand: handleKeyboardToggleExpand,
-    virtualizer: rowVirtualizer,
-    enabled: !isLoading && entries.length > 0,
-  });
-
-  // Clear selection when entries change (filter change)
-  useEffect(() => {
-    setSelectedIndex(null);
-  }, [filter]);
-
-  const handleToggleExpand = useCallback((cursor: string) => {
+  const toggleExpandedCursor = useCallback((cursor: string) => {
     if (parentRef.current) {
       const parent = parentRef.current;
       const anchorEl = parent.querySelector(`[data-cursor="${cursor}"]`);
@@ -133,9 +152,8 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
         };
       }
     }
-
-    setExpandedRows((prev) => {
-      const next = new Set(prev);
+    setExpandedRows((previous) => {
+      const next = new Set(previous);
       if (next.has(cursor)) {
         next.delete(cursor);
       } else {
@@ -146,64 +164,82 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
     });
   }, []);
 
-  // Store scroll handler deps in refs to avoid recreating debounced function
-  const scrollDepsRef = useRef({
-    syncEnabled,
-    isNewestFirst: filter.reverse !== false,
+  const handleKeyboardToggleExpand = useCallback((index: number) => {
+    const entry = entries[index];
+    if (entry) {
+      toggleExpandedCursor(entry.cursor);
+    }
+  }, [entries, toggleExpandedCursor]);
+
+  useKeyboardNavigation({
+    itemCount: entries.length,
+    selectedIndex,
+    onSelectionChange: setSelectedIndex,
+    onToggleExpand: handleKeyboardToggleExpand,
+    virtualizer: rowVirtualizer,
+    enabled: !isLoading && entries.length > 0,
   });
-  scrollDepsRef.current = {
-    syncEnabled,
-    isNewestFirst: filter.reverse !== false,
-  };
 
-  const handleScroll = useMemo(() => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let syncTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  const scrollDepsRef = useRef({ syncEnabled });
+  scrollDepsRef.current = { syncEnabled };
 
-    const scrollHandler = () => {
-      if (!parentRef.current) return;
+  const handleScroll = useCallback(() => {
+    if (isSyncScrolling.current) {
+      syncObservedScrollTopRef.current = parentRef.current?.scrollTop ?? null;
+      suppressNextSyncScrollRef.current = false;
+      return;
+    }
+    if (suppressNextSyncScrollRef.current) {
+      suppressNextSyncScrollRef.current = false;
+      return;
+    }
+    if (scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      if (
+        !parentRef.current
+        || !scrollDepsRef.current.syncEnabled
+        || isSyncScrolling.current
+      ) return;
 
-      const { syncEnabled } = scrollDepsRef.current;
-
-      // Broadcast timestamp for scroll sync (debounced separately, 150ms)
-      // Skip if we're currently scrolling due to a sync event from another panel
-      if (syncEnabled && !isSyncScrolling.current) {
-        if (syncTimeoutId) {
-          clearTimeout(syncTimeoutId);
-        }
-        syncTimeoutId = setTimeout(() => {
-          const virtualItems = rowVirtualizer.getVirtualItems();
-          if (virtualItems.length > 0 && entriesRef.current.length > 0) {
-            const timestamp = getVisibleTimestamp(
-              entriesRef.current,
-              virtualItems[0].index,
-              virtualItems[virtualItems.length - 1].index,
-              0.3 // Upper third of viewport
-            );
-            if (timestamp !== null) {
-              broadcastTimestamp(timestamp, hostId);
-            }
-          }
-          syncTimeoutId = null;
-        }, 150);
+      if (scrollSyncTimeoutRef.current) {
+        clearTimeout(scrollSyncTimeoutRef.current);
       }
-    };
-
-    return () => {
-      if (timeoutId) return;
-      timeoutId = setTimeout(() => {
-        timeoutId = null;
-        scrollHandler();
-      }, 16);
-    };
+      scrollSyncTimeoutRef.current = setTimeout(() => {
+        const virtualItems = rowVirtualizer.getVirtualItems();
+        if (virtualItems.length > 0 && entriesRef.current.length > 0) {
+          const timestamp = getVisibleTimestamp(
+            entriesRef.current,
+            virtualItems[0].index,
+            virtualItems[virtualItems.length - 1].index,
+            0.3,
+          );
+          if (timestamp !== null) {
+            broadcastTimestamp(timestamp, hostId);
+          }
+        }
+        scrollSyncTimeoutRef.current = null;
+      }, 150);
+    });
   }, [broadcastTimestamp, hostId, rowVirtualizer]);
 
-  // Clear expanded rows when hostId changes
-  useEffect(() => {
+  const previousReplacementIdentityRef = useRef(replacementIdentity);
+  useLayoutEffect(() => {
+    if (previousReplacementIdentityRef.current === replacementIdentity) return;
+
+    previousReplacementIdentityRef.current = replacementIdentity;
+    cancelScheduledScrollWork();
+    viewerState.current.anchor = null;
+    viewerState.current.lastExpandedCursor = null;
+    viewerState.current.prevEntriesLength = entries.length;
     setExpandedRows(new Set());
     setSelectedIndex(null);
-  }, [hostId]);
+    parentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [cancelScheduledScrollWork, entries.length, replacementIdentity]);
 
+  const handleToggleExpand = toggleExpandedCursor;
+
+  const lastProcessedSyncVersion = useRef(0);
   // Track which host we last synced for, to handle host switches
   const lastSyncedHostId = useRef<string | null>(null);
 
@@ -235,20 +271,53 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
     const targetIndex = findEntryIndexByTimestamp(entries, anchorTimestamp, isNewestFirst);
 
     if (targetIndex >= 0) {
-      // Mark that we're doing a sync scroll to avoid echo
+      const scrollTopBefore = parentRef.current?.scrollTop;
       isSyncScrolling.current = true;
+      suppressNextSyncScrollRef.current = true;
+      syncObservedScrollTopRef.current = scrollTopBefore ?? null;
+      syncPreviousScrollTopRef.current = scrollTopBefore ?? null;
+      syncStableFramesRef.current = 0;
+      rowVirtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'auto' });
+      if (syncResetFrameRef.current !== null) {
+        cancelAnimationFrame(syncResetFrameRef.current);
+      }
+      const finishSyncScroll = () => {
+        const parent = parentRef.current;
+        if (!parent) {
+          isSyncScrolling.current = false;
+          suppressNextSyncScrollRef.current = false;
+          syncObservedScrollTopRef.current = null;
+          syncPreviousScrollTopRef.current = null;
+          syncStableFramesRef.current = 0;
+          syncResetFrameRef.current = null;
+          return;
+        }
 
-      // Scroll to the target index
-      rowVirtualizer.scrollToIndex(targetIndex, { align: 'start', behavior: 'smooth' });
+        if (parent.scrollTop === syncPreviousScrollTopRef.current) {
+          syncStableFramesRef.current += 1;
+        } else {
+          syncPreviousScrollTopRef.current = parent.scrollTop;
+          syncStableFramesRef.current = 0;
+        }
 
-      // Reset sync scrolling flag after animation
-      setTimeout(() => {
+        if (syncStableFramesRef.current < 2) {
+          syncResetFrameRef.current = requestAnimationFrame(finishSyncScroll);
+          return;
+        }
+
+        suppressNextSyncScrollRef.current = false;
         isSyncScrolling.current = false;
-      }, 500);
+        syncObservedScrollTopRef.current = null;
+        syncPreviousScrollTopRef.current = null;
+        syncStableFramesRef.current = 0;
+        syncResetFrameRef.current = null;
+      };
+      syncResetFrameRef.current = requestAnimationFrame(finishSyncScroll);
     }
   }, [syncEnabled, anchorTimestamp, sourceTabId, hostId, syncVersion, entries, filter.reverse, rowVirtualizer]);
 
-  if (error) {
+
+  if (error && entries.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center p-8">
@@ -259,6 +328,14 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
           <p className="text-sm text-theme-secondary max-w-md">
             {error}
           </p>
+          <div className="flex justify-center gap-4 mt-4">
+            <button
+              onClick={canRetry ? retry : refresh}
+              className="text-sm accent-theme hover:opacity-80"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -308,6 +385,22 @@ export function PanelLogViewer({ hostId, panelPosition }: PanelLogViewerProps) {
           {exportNotification.message}
         </div>
       )}
+      {error && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 text-sm bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300" role="alert">
+          <span>{error}</span>
+          <div className="flex shrink-0 gap-3">
+            {canRetry && (
+              <button onClick={retry} className="accent-theme hover:opacity-80">
+                Retry
+              </button>
+            )}
+            <button onClick={refresh} className="accent-theme hover:opacity-80">
+              Refresh logs
+            </button>
+          </div>
+        </div>
+      )}
+
 
       {/* Virtualized list */}
       <div

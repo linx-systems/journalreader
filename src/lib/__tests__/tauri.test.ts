@@ -7,8 +7,12 @@ import {
   listBoots,
   listUnits,
   queryJournal,
+  queryRemoteJournal,
+  isRemoteFollowing,
   startFollow,
+  startRemoteFollow,
   stopFollow,
+  stopRemoteFollow,
 } from "../tauri";
 import type {
   BootInfo,
@@ -37,6 +41,20 @@ it("queryJournal calls invoke with filter", async () => {
   const response = await queryJournal(filter);
 
   expect(invokeMock).toHaveBeenCalledWith("query_journal", { filter });
+  expect(response).toBe(result);
+});
+
+it("queryRemoteJournal binds host ID and filter", async () => {
+  const result: JournalQueryResult = { entries: [], hasMore: false };
+  const filter = { ...DEFAULT_FILTER };
+  invokeMock.mockResolvedValueOnce(result);
+
+  const response = await queryRemoteJournal("host-a", filter);
+
+  expect(invokeMock).toHaveBeenCalledWith("query_remote_journal", {
+    hostId: "host-a",
+    filter,
+  });
   expect(response).toBe(result);
 });
 
@@ -70,21 +88,38 @@ it("getLogCount calls invoke with filter", async () => {
   expect(response).toBe(42);
 });
 
-it("startFollow calls invoke with filter", async () => {
+it("startFollow binds its session ID", async () => {
   const filter = { ...DEFAULT_FILTER };
   invokeMock.mockResolvedValueOnce(undefined);
 
-  await startFollow(filter);
+  await startFollow(filter, "local-session");
 
-  expect(invokeMock).toHaveBeenCalledWith("start_follow", { filter });
+  expect(invokeMock).toHaveBeenCalledWith("start_follow", { filter, sessionId: "local-session" });
 });
 
-it("stopFollow calls invoke", async () => {
+it("stopFollow binds its session ID", async () => {
   invokeMock.mockResolvedValueOnce(undefined);
 
-  await stopFollow();
+  await stopFollow("local-session");
 
-  expect(invokeMock).toHaveBeenCalledWith("stop_follow");
+  expect(invokeMock).toHaveBeenCalledWith("stop_follow", { sessionId: "local-session" });
+});
+
+it("remote follow commands require host and session IDs", async () => {
+  const filter = { ...DEFAULT_FILTER };
+  invokeMock.mockResolvedValue(undefined);
+
+  await startRemoteFollow("host-a", filter, "remote-session", "password");
+  await stopRemoteFollow("host-a", "remote-session");
+  await isRemoteFollowing("host-a");
+
+  expect(invokeMock).toHaveBeenNthCalledWith(1, "start_remote_follow", {
+    hostId: "host-a", filter, sessionId: "remote-session", password: "password",
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(2, "stop_remote_follow", {
+    hostId: "host-a", sessionId: "remote-session",
+  });
+  expect(invokeMock).toHaveBeenNthCalledWith(3, "is_remote_following", { hostId: "host-a" });
 });
 
 it("isFollowing calls invoke", async () => {

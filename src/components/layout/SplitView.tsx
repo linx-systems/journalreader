@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SplitPanel } from './SplitPanel';
 import { ResizableDivider } from './ResizableDivider';
 import { useLayoutStore, type ViewLayout } from '../../stores/layoutStore';
@@ -26,10 +26,15 @@ export function SplitView({
     rightPanelHostId,
     minPanelSize,
     setSplitRatio,
-    resetSplitRatio,
     swapPanels,
     exitSplitView,
   } = useLayoutStore();
+
+  const [displayRatio, setDisplayRatio] = useState(splitRatio);
+  const isDraggingRef = useRef(false);
+  const dragStartRatioRef = useRef(splitRatio);
+  const pendingRatioRef = useRef(splitRatio);
+  const resizeFrameRef = useRef<number | null>(null);
 
   const { activeTabId } = useConnectionStore();
 
@@ -42,13 +47,55 @@ export function SplitView({
   const isHorizontalSplit = layout === 'split-horizontal';
   const isSplit = isVerticalSplit || isHorizontalSplit;
 
-  const handleResize = useCallback((ratio: number) => {
-    setSplitRatio(ratio);
-  }, [setSplitRatio]);
+  const cancelPendingResize = useCallback(() => {
+    if (resizeFrameRef.current !== null) {
+      cancelAnimationFrame(resizeFrameRef.current);
+      resizeFrameRef.current = null;
+    }
+  }, []);
 
-  const handleResetRatio = useCallback(() => {
-    resetSplitRatio();
-  }, [resetSplitRatio]);
+  const handleResizeStart = useCallback(() => {
+    const committedRatio = useLayoutStore.getState().splitRatio;
+    isDraggingRef.current = true;
+    dragStartRatioRef.current = committedRatio;
+    pendingRatioRef.current = committedRatio;
+  }, []);
+
+  const handleResize = useCallback((ratio: number) => {
+    pendingRatioRef.current = ratio;
+    if (resizeFrameRef.current !== null) return;
+
+    resizeFrameRef.current = requestAnimationFrame(() => {
+      resizeFrameRef.current = null;
+      setDisplayRatio(pendingRatioRef.current);
+    });
+  }, []);
+
+  const handleResizeEnd = useCallback((ratio: number) => {
+    cancelPendingResize();
+    pendingRatioRef.current = ratio;
+    isDraggingRef.current = false;
+    setDisplayRatio(ratio);
+    setSplitRatio(ratio);
+  }, [cancelPendingResize, setSplitRatio]);
+
+  const handleResizeCancel = useCallback(() => {
+    cancelPendingResize();
+    pendingRatioRef.current = dragStartRatioRef.current;
+    isDraggingRef.current = false;
+    setDisplayRatio(dragStartRatioRef.current);
+  }, [cancelPendingResize]);
+
+  useEffect(() => {
+    if (!isDraggingRef.current) {
+      pendingRatioRef.current = splitRatio;
+      setDisplayRatio(splitRatio);
+    }
+  }, [splitRatio]);
+
+  useEffect(() => () => {
+    cancelPendingResize();
+  }, [cancelPendingResize]);
 
   const handleCollapse = useCallback(() => {
     exitSplitView();
@@ -59,9 +106,9 @@ export function SplitView({
     return null;
   }
 
-  // Calculate panel sizes based on ratio
-  const leftSize = `${splitRatio * 100}%`;
-  const rightSize = `${(1 - splitRatio) * 100}%`;
+  // Calculate panel sizes based on the local display ratio while dragging.
+  const leftSize = `${displayRatio * 100}%`;
+  const rightSize = `${(1 - displayRatio) * 100}%`;
 
   return (
     <div
@@ -90,8 +137,11 @@ export function SplitView({
       {/* Resizable divider */}
       <ResizableDivider
         orientation={isVerticalSplit ? 'vertical' : 'horizontal'}
+        ratio={displayRatio}
+        onResizeStart={handleResizeStart}
         onResize={handleResize}
-        onDoubleClick={handleResetRatio}
+        onResizeEnd={handleResizeEnd}
+        onResizeCancel={handleResizeCancel}
         minSize={minPanelSize}
       />
 

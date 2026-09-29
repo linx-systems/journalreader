@@ -1,26 +1,16 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { queryJournal, queryRemoteJournal } from '../lib/tauri';
 import { queryOfflineJournal } from '../lib/offlineTauri';
 import { isConnectionError } from '../lib/connectionErrors';
-import type { JournalEntry, JournalFilter, JournalQueryResult } from '../lib/types';
+import { filtersEqual, type JournalEntry, type JournalFilter, type JournalQueryResult } from '../lib/types';
 
-/**
- * Configuration for determining which data source to query.
- */
 export interface JournalDataSource {
-  /** The host/tab ID being queried */
   hostId: string;
-  /** Whether this is a remote host (vs local) */
   isRemote: boolean;
-  /** Whether we're connected to this remote host */
   isConnected: boolean;
-  /** Whether offline mode is active */
   isOffline: boolean;
 }
 
-/**
- * State setters for journal log state management.
- */
 export interface JournalStateActions {
   setEntries: (entries: JournalEntry[]) => void;
   appendEntries: (entries: JournalEntry[]) => void;
@@ -28,164 +18,216 @@ export interface JournalStateActions {
   setError: (error: string | null) => void;
   setHasMore: (hasMore: boolean) => void;
   setCursorEnd: (cursor: string | null) => void;
-  setOfflineMode: (offline: boolean) => Promise<void>;
+  setOfflineMode: (offline: boolean) => void;
 }
 
-/**
- * Refs for accessing current values without triggering effect re-runs.
- */
 export interface JournalRefs {
   filter: JournalFilter;
   cursorEnd: string | null;
   dataSource: JournalDataSource;
-  /** Optional sync-adjusted filter override (used for tab switching with scroll sync) */
-  syncAdjustedFilter?: { since?: string } | null;
+  enabled: boolean;
 }
 
 interface UseJournalFetchOptions {
-  /** State actions for updating journal state */
   actions: JournalStateActions;
-  /** Refs for current values */
   refs: React.MutableRefObject<JournalRefs>;
-  /** Optional callback to clear sync-adjusted filter after use */
-  onSyncFilterUsed?: () => void;
+  /**
+   * Reads state directly from the owning Zustand stores. This avoids accepting
+   * a response merely because a component has not re-rendered yet.
+   */
+  getCurrent: () => JournalRefs;
+}
+
+export interface FailedJournalRequest {
+  append: boolean;
+  cursor: string | null;
+  overrides: Partial<JournalFilter>;
+  baseFilter: JournalFilter;
+  dataSource: JournalDataSource;
+  canRetry: boolean;
 }
 
 interface UseJournalFetchResult {
-  /** Fetch journal logs (optionally appending to existing entries) */
-  fetchLogs: (append?: boolean) => Promise<void>;
-  /** Load more entries (pagination) */
-  loadMore: () => void;
-  /** Refresh entries from the beginning */
-  refresh: () => void;
+  fetchLogs: (append?: boolean, overrides?: Partial<JournalFilter>) => Promise<void>;
+  retryFailedRequest: () => void;
+  canRetryFailedRequest: boolean;
+  invalidate: () => void;
 }
 
-/**
- * Core hook for fetching journal logs from local, remote, or offline sources.
- * Handles data source selection, pagination, offline fallback, and abort control.
- *
- * @example
- * ```tsx
- * const refs = useRef<JournalRefs>({
- *   filter,
- *   cursorEnd,
- *   dataSource: { hostId, isRemote, isConnected, isOffline },
- * });
- *
- * const { fetchLogs, loadMore, refresh } = useJournalFetch({
- *   actions: { setEntries, appendEntries, setLoading, setError, setHasMore, setCursorEnd, setOfflineMode },
- *   refs,
- * });
- * ```
- */
+function sameSource(a: JournalDataSource, b: JournalDataSource): boolean {
+  return a.hostId === b.hostId
+    && a.isRemote === b.isRemote
+    && a.isConnected === b.isConnected
+    && a.isOffline === b.isOffline;
+}
+
 export function useJournalFetch({
   actions,
   refs,
-  onSyncFilterUsed,
+  getCurrent,
 }: UseJournalFetchOptions): UseJournalFetchResult {
   const { setEntries, appendEntries, setLoading, setError, setHasMore, setCursorEnd, setOfflineMode } = actions;
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const generationRef = useRef(0);
+  const mountedRef = useRef(true);
+  const appendInFlightRef = useRef(false);
+  const [failedRequest, setFailedRequest] = useState<FailedJournalRequest | null>(null);
 
-  // Cleanup AbortController on unmount
-  useEffect(() => {
-    return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-    };
+  const invalidate = useCallback(() => {
+    generationRef.current += 1;
+    appendInFlightRef.current = false;
+    setFailedRequest(null);
   }, []);
 
-  const fetchLogs = useCallback(async (append = false) => {
-    // Cancel any pending request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = new AbortController();
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      invalidate();
+    };
+  }, [invalidate]);
 
+  const executeRequest = useCallback(async (
+    request: Pick<FailedJournalRequest, 'append' | 'cursor' | 'overrides'>,
+  ) => {
+    const { append, cursor, overrides } = request;
+    if (append && appendInFlightRef.current) {
+      return;
+    }
+
+    // A refresh replaces every prior request, including an append.
+    generationRef.current += 1;
+    const generation = generationRef.current;
+    if (append) {
+      appendInFlightRef.current = true;
+    } else {
+      appendInFlightRef.current = false;
+    }
+
+    const captured = refs.current;
+    const baseFilter = captured.filter;
+    const filter = {
+      ...baseFilter,
+      ...overrides,
+      ...(append && cursor ? { afterCursor: cursor } : {}),
+    };
+    const requestIsCurrent = () => {
+      const current = getCurrent();
+      return mountedRef.current
+        && generation === generationRef.current
+        && current.enabled
+        && filtersEqual(baseFilter, current.filter)
+        && sameSource(captured.dataSource, current.dataSource)
+        && (!append || current.cursorEnd === cursor);
+    };
+    const completionIsCurrent = () => {
+      const current = getCurrent();
+      return mountedRef.current
+        && generation === generationRef.current
+        && current.enabled
+        && filtersEqual(baseFilter, current.filter)
+        && sameSource(captured.dataSource, current.dataSource);
+    };
+
+    if (!requestIsCurrent()) {
+      if (append) appendInFlightRef.current = false;
+      return;
+    }
+    setFailedRequest(null);
     setLoading(true);
     setError(null);
 
     try {
-      const { filter, cursorEnd, dataSource, syncAdjustedFilter } = refs.current;
-      const { hostId, isRemote, isConnected, isOffline } = dataSource;
-
-      // Apply sync-adjusted filter if available (for tab switches with scroll sync)
-      let baseFilter = filter;
-      if (syncAdjustedFilter && !append) {
-        baseFilter = { ...filter, ...syncAdjustedFilter };
-        // Clear after use
-        onSyncFilterUsed?.();
-      }
-
-      const filterToUse = append && cursorEnd
-        ? { ...baseFilter, afterCursor: cursorEnd }
-        : baseFilter;
-
-      const result = await queryDataSource({
-        filter: filterToUse,
-        hostId,
-        isRemote,
-        isConnected,
-        isOffline,
-      });
+      const result = await queryDataSource({ filter, ...captured.dataSource });
+      if (!requestIsCurrent()) return;
 
       if (append) {
         appendEntries(result.entries);
       } else {
         setEntries(result.entries);
       }
-
       setHasMore(result.hasMore);
       setCursorEnd(result.cursorEnd ?? null);
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      const { dataSource, filter, cursorEnd } = refs.current;
-      const { hostId, isOffline } = dataSource;
+      if (!requestIsCurrent()) return;
 
-      // Auto-fallback: if remote query fails with connection error, switch to offline mode
-      if (!isOffline && isConnectionError(err)) {
-        try {
-          await setOfflineMode(true);
-          const filterToUse = append && cursorEnd
-            ? { ...filter, afterCursor: cursorEnd }
-            : filter;
-          const result = await queryOfflineJournal(hostId, filterToUse);
-
-          if (append) {
-            appendEntries(result.entries);
-          } else {
-            setEntries(result.entries);
-          }
-
-          setHasMore(result.hasMore);
-          setCursorEnd(result.cursorEnd ?? null);
-          return; // Success after fallback
-        } catch {
-          // Fallback also failed, report original error
-          setError(errorMessage);
-        }
-      } else {
-        setError(errorMessage);
+      // Changing the persisted frontend state synchronously causes the owning
+      // replacement effect to fetch cached page one. Never query a stale source
+      // inline here.
+      if (
+        captured.dataSource.isRemote
+        && !captured.dataSource.isOffline
+        && isConnectionError(err)
+      ) {
+        setOfflineMode(true);
+        return;
       }
+      const message = err instanceof Error ? err.message : String(err);
+      setFailedRequest({
+        append,
+        cursor,
+        overrides: { ...overrides },
+        baseFilter,
+        dataSource: captured.dataSource,
+        canRetry: !(append && captured.dataSource.isOffline && /cursor expired/i.test(message)),
+      });
+      setError(message);
     } finally {
-      setLoading(false);
+      if (append && generation === generationRef.current) {
+        appendInFlightRef.current = false;
+      }
+      if (completionIsCurrent()) {
+        setLoading(false);
+      }
     }
-  }, [setEntries, appendEntries, setLoading, setError, setHasMore, setCursorEnd, setOfflineMode, refs, onSyncFilterUsed]);
+  }, [
+    appendEntries,
+    getCurrent,
+    refs,
+    setEntries,
+    setError,
+    setHasMore,
+    setLoading,
+    setCursorEnd,
+    setOfflineMode,
+  ]);
 
-  const loadMore = useCallback(() => {
-    fetchLogs(true);
-  }, [fetchLogs]);
+  const fetchLogs = useCallback(async (
+    append = false,
+    overrides: Partial<JournalFilter> = {},
+  ) => {
+    await executeRequest({
+      append,
+      cursor: append ? refs.current.cursorEnd : null,
+      overrides,
+    });
+  }, [executeRequest, refs]);
 
-  const refresh = useCallback(() => {
-    fetchLogs(false);
-  }, [fetchLogs]);
+  const canRetryFailedRequest = failedRequest !== null
+    && failedRequest.canRetry
+    && (!failedRequest.append || refs.current.cursorEnd === failedRequest.cursor);
 
-  return { fetchLogs, loadMore, refresh };
+  const retryFailedRequest = useCallback(() => {
+    if (
+      !canRetryFailedRequest
+      || failedRequest === null
+      || !filtersEqual(failedRequest.baseFilter, getCurrent().filter)
+      || !sameSource(failedRequest.dataSource, getCurrent().dataSource)
+      || (failedRequest.append && getCurrent().cursorEnd !== failedRequest.cursor)
+    ) {
+      return;
+    }
+    void executeRequest(failedRequest);
+  }, [canRetryFailedRequest, executeRequest, failedRequest, getCurrent]);
+
+  return {
+    fetchLogs,
+    retryFailedRequest,
+    canRetryFailedRequest,
+    invalidate,
+  };
+
 }
 
-/**
- * Query the appropriate data source based on connection state.
- */
 async function queryDataSource(options: {
   filter: JournalFilter;
   hostId: string;
@@ -194,18 +236,14 @@ async function queryDataSource(options: {
   isOffline: boolean;
 }): Promise<JournalQueryResult> {
   const { filter, hostId, isRemote, isConnected, isOffline } = options;
-
   if (isOffline) {
-    // Query offline storage when in offline mode or not connected
     return queryOfflineJournal(hostId, filter);
-  } else if (isRemote && isConnected) {
-    // Query remote host when connected
-    return queryRemoteJournal(filter);
-  } else if (isRemote) {
-    // Remote but not connected - use offline storage
-    return queryOfflineJournal(hostId, filter);
-  } else {
-    // Query local journal
-    return queryJournal(filter);
   }
+  if (isRemote && isConnected) {
+    return queryRemoteJournal(hostId, filter);
+  }
+  if (isRemote) {
+    return queryOfflineJournal(hostId, filter);
+  }
+  return queryJournal(filter);
 }

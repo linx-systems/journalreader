@@ -15,6 +15,7 @@ import { HostKeyVerificationDialog } from './HostKeyVerificationDialog';
 import { HostCard } from './HostCard';
 import { HostEditor } from './HostEditor';
 import { PasswordPromptDialog } from './PasswordPromptDialog';
+import { ModalDialog } from '../ui/ModalDialog';
 
 interface ConnectionManagerProps {
   isOpen: boolean;
@@ -293,13 +294,17 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <ModalDialog
+      isOpen={isOpen}
+      onRequestClose={onClose}
+      labelledBy="connection-manager-title"
+    >
       <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-theme">
           <div className="flex items-center gap-3">
             <Server className="h-5 w-5 accent-theme" />
-            <h2 className="text-lg font-semibold text-theme">Remote Hosts</h2>
+            <h2 id="connection-manager-title" className="text-lg font-semibold text-theme">Remote Hosts</h2>
           </div>
           <button
             onClick={onClose}
@@ -363,6 +368,6 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
           </button>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

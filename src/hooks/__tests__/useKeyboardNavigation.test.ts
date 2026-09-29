@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { render, renderHook } from '@testing-library/react';
 import { useKeyboardNavigation } from '../useKeyboardNavigation';
 import { KEYBOARD_SEQUENCE_TIMEOUT_MS } from '../../lib/constants';
 import type { Virtualizer } from '@tanstack/react-virtual';
+import { ModalDialog } from '../../components/ui/ModalDialog';
+import { createElement } from 'react';
 
 // Mock virtualizer
 function createMockVirtualizer(): Virtualizer<HTMLDivElement, Element> {
@@ -1263,5 +1265,26 @@ describe('useKeyboardNavigation', () => {
 
       expect(mockOnSelectionChange).toHaveBeenCalledWith(0);
     });
+  });
+  it('does not navigate the log list while a native modal is open', () => {
+    render(
+      createElement(ModalDialog, {
+        isOpen: true,
+        labelledBy: 'modal-navigation-title',
+        onRequestClose: vi.fn(),
+        children: createElement('div', null, createElement('h2', { id: 'modal-navigation-title' }, 'Modal'), createElement('button', null, 'Close')),
+      })
+    );
+    renderHook(() =>
+      useKeyboardNavigation({
+        itemCount: 10,
+        selectedIndex: 0,
+        onSelectionChange: mockOnSelectionChange,
+      })
+    );
+
+    fireKeyDown('j');
+
+    expect(mockOnSelectionChange).not.toHaveBeenCalled();
   });
 });

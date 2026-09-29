@@ -1,229 +1,300 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useFilterStore } from '../stores/filterStore';
-import { useConnectionStore } from '../stores/connectionStore';
+import { LOCAL_TAB_ID, useConnectionStore } from '../stores/connectionStore';
+import { useLayoutStore } from '../stores/layoutStore';
+import { useOfflineStore } from '../stores/offlineStore';
 import {
-  useFollowModeStore,
-  setupListeners,
   cleanupListeners,
-  DEBOUNCE_MS,
+  setupListeners,
+  useFollowModeStore,
+  type DesiredFollowSession,
 } from '../stores/followModeStore';
-import { filtersEqual } from '../lib/types';
+import { DEBOUNCE_MS } from '../lib/constants';
 import {
-  startFollow,
-  stopFollow,
-  startRemoteFollow,
-  stopRemoteFollow,
   getHostPassword,
+  startFollow,
+  startRemoteFollow,
+  stopFollow,
+  stopRemoteFollow,
 } from '../lib/tauri';
+import { filtersEqual, type JournalFilter } from '../lib/types';
 import { logError } from '../lib/errorLogger';
 
+interface FollowSource {
+  hostId: string;
+  remote: boolean;
+}
+
+function currentFollowSource(): FollowSource | null {
+  const connection = useConnectionStore.getState();
+  if (connection.activeTabId === LOCAL_TAB_ID) {
+    return { hostId: LOCAL_TAB_ID, remote: false };
+  }
+  return !useOfflineStore.getState().isOfflineMode
+    && connection.connectionStatus === 'connected'
+    && connection.connectedHostId === connection.activeTabId
+    ? { hostId: connection.activeTabId, remote: true }
+    : null;
+}
+
+function sessionSourceIsCurrent(session: FollowRun): boolean {
+  const source = currentFollowSource();
+  return !useOfflineStore.getState().isOfflineMode
+    && useLayoutStore.getState().layout === 'single'
+    && source !== null
+    && source.hostId === session.hostId
+    && source.remote === session.remote;
+}
+
+interface FollowRun extends DesiredFollowSession {
+  remote: boolean;
+  accepting: boolean;
+  stopping: boolean;
+}
+
+function newSessionId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/** Owns the one live-follow session for the application shell. */
 export function useFollowMode() {
-  const {
-    filter,
-    isFollowing,
-    isFollowPaused,
-    prependEntries,
-    setFollowing,
-    setFollowPaused,
-    setError,
-  } = useFilterStore();
+  const filter = useFilterStore((state) => state.filter);
+  const isFollowing = useFilterStore((state) => state.isFollowing);
+  const isFollowPaused = useFilterStore((state) => state.isFollowPaused);
+  const activeTabId = useConnectionStore((state) => state.activeTabId);
+  const connectedHostId = useConnectionStore((state) => state.connectedHostId);
+  const connectionStatus = useConnectionStore((state) => state.connectionStatus);
+  const isOfflineMode = useOfflineStore((state) => state.isOfflineMode);
+  const layout = useLayoutStore((state) => state.layout);
 
-  const { connectedHostId, connectionStatus } = useConnectionStore();
-  const isRemote = connectionStatus === 'connected' && connectedHostId !== null;
+  const source: FollowSource | null = activeTabId === LOCAL_TAB_ID
+    ? { hostId: LOCAL_TAB_ID, remote: false }
+    : !isOfflineMode && connectionStatus === 'connected' && connectedHostId === activeTabId
+      ? { hostId: activeTabId, remote: true }
+      : null;
+  const sourceKey = source ? `${source.remote ? 'remote' : 'local'}:${source.hostId}` : 'unavailable';
+  const followAvailable = source !== null && !isOfflineMode && layout === 'single';
 
-  // Access store state and actions
-  const {
-    lastFilter,
-    setLastFilter,
-    setRestartInProgress,
-    clearDebounceTimer,
-    setDebounceTimer,
-  } = useFollowModeStore();
-
-  // Use refs to track state in callbacks without re-creating them
-  const isRemoteRef = useRef(isRemote);
-  const connectedHostIdRef = useRef(connectedHostId);
   const filterRef = useRef(filter);
-  isRemoteRef.current = isRemote;
-  connectedHostIdRef.current = connectedHostId;
+  const runRef = useRef<FollowRun | null>(null);
+  const queueRef = useRef(Promise.resolve());
+  const restartTimerRef = useRef<number | undefined>(undefined);
+  const restartIntentRef = useRef(0);
+  const mountedRef = useRef(true);
+  const previousFilterRef = useRef<JournalFilter | null>(null);
   filterRef.current = filter;
 
-  // Start follow mode
-  const start = useCallback(async () => {
-    try {
-      // Set up listeners if not already done
-      await setupListeners(prependEntries, setError, setFollowing);
+  const release = useCallback((session: DesiredFollowSession) => {
+    const desired = useFollowModeStore.getState().desiredSession;
+    if (desired?.hostId === session.hostId && desired.sessionId === session.sessionId) {
+      useFollowModeStore.getState().setDesiredSession(null);
+    }
+    const run = runRef.current;
+    if (run?.hostId === session.hostId && run.sessionId === session.sessionId) {
+      runRef.current = null;
+    }
+  }, []);
 
-      // Start the follow process in Rust (remote or local)
-      if (isRemoteRef.current) {
-        // For remote connections, retrieve password from keyring if available
-        // The session password is cleared after initial connection, so we need
-        // to get it from the keyring for the follow mode's separate SSH connection
-        const hostId = connectedHostIdRef.current;
-        let password: string | undefined;
-        if (hostId) {
-          const savedPassword = await getHostPassword(hostId);
-          password = savedPassword ?? undefined;
-        }
-        await startRemoteFollow(filter, password);
+  const enqueue = useCallback((operation: () => Promise<void>) => {
+    const next = queueRef.current.then(operation, operation);
+    queueRef.current = next.catch(() => undefined);
+    return next;
+  }, []);
+
+  const invalidateRestartIntent = useCallback(() => {
+    restartIntentRef.current += 1;
+    if (restartTimerRef.current !== undefined) {
+      clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = undefined;
+    }
+    return restartIntentRef.current;
+  }, []);
+
+  const ownsSession = useCallback((session: FollowRun, intent: number) => (
+    mountedRef.current
+    && restartIntentRef.current === intent
+    && runRef.current === session
+    && !session.stopping
+    && session.accepting
+    && sessionSourceIsCurrent(session)
+  ), []);
+
+  const stopRun = useCallback(async (run: FollowRun) => {
+    try {
+      if (run.remote) {
+        await stopRemoteFollow(run.hostId, run.sessionId);
       } else {
-        await startFollow(filter);
+        await stopFollow(run.sessionId);
       }
-      setFollowing(true);
-      setFollowPaused(false);
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setError(`Failed to start follow mode: ${errorMessage}`);
-      setFollowing(false);
+    } catch (error) {
+      logError(error, { component: 'useFollowMode', action: 'stop' });
+    } finally {
+      release(run);
+      const current = useFilterStore.getState();
+      current.setFollowing(false);
+      current.setFollowPaused(false);
     }
-  }, [filter, prependEntries, setError, setFollowing, setFollowPaused]);
+  }, [release]);
 
-  // Stop follow mode
-  const stop = useCallback(async () => {
-    try {
-      // Stop both local and remote - only the active one will actually do anything.
-      // Errors from the inactive one are expected (e.g., "not running"), so we log
-      // but don't propagate them.
-      await Promise.all([
-        stopFollow().catch((err) =>
-          logError(err, { component: 'useFollowMode', action: 'stopFollow' })
-        ),
-        stopRemoteFollow().catch((err) =>
-          logError(err, { component: 'useFollowMode', action: 'stopRemoteFollow' })
-        ),
-      ]);
-    } catch (err) {
-      logError(err, { component: 'useFollowMode', action: 'stopFollow' });
+  const requestStop = useCallback((run = runRef.current, invalidateIntent = true) => {
+    if (invalidateIntent) invalidateRestartIntent();
+    if (!run || run.stopping) return queueRef.current;
+    run.stopping = true;
+    useFilterStore.getState().setFollowPaused(false);
+    return enqueue(() => stopRun(run));
+  }, [enqueue, invalidateRestartIntent, stopRun]);
+
+  const begin = useCallback((
+    requestedFilter: JournalFilter = filterRef.current,
+    intent = restartIntentRef.current,
+  ) => {
+    const currentSource = currentFollowSource();
+    if (
+      !mountedRef.current
+      || restartIntentRef.current !== intent
+      || !currentSource
+      || useOfflineStore.getState().isOfflineMode
+      || useLayoutStore.getState().layout !== 'single'
+      || runRef.current !== null
+    ) {
+      return Promise.resolve();
     }
-    setFollowing(false);
-    setFollowPaused(false);
-    cleanupListeners();
-  }, [setFollowing, setFollowPaused]);
 
-  // Toggle follow mode
-  const toggle = useCallback(async () => {
-    if (isFollowing) {
-      await stop();
-    } else {
-      await start();
-    }
-  }, [isFollowing, start, stop]);
-
-  // Pause follow mode (when user scrolls up)
-  const pause = useCallback(() => {
-    if (isFollowing && !isFollowPaused) {
-      setFollowPaused(true);
-    }
-  }, [isFollowing, isFollowPaused, setFollowPaused]);
-
-  // Resume follow mode (when user scrolls to bottom or clicks resume)
-  const resume = useCallback(() => {
-    if (isFollowing && isFollowPaused) {
-      setFollowPaused(false);
-    }
-  }, [isFollowing, isFollowPaused, setFollowPaused]);
-
-  // Cleanup on unmount (only if this is the component that started follow mode)
-  useEffect(() => {
-    return () => {
-      // Only cleanup if we're actually following
-      if (isFollowing) {
-        stopFollow().catch((err) =>
-          logError(err, { component: 'useFollowMode', action: 'cleanup:stopFollow' })
-        );
-        stopRemoteFollow().catch((err) =>
-          logError(err, { component: 'useFollowMode', action: 'cleanup:stopRemoteFollow' })
-        );
-        cleanupListeners();
-      }
+    const session: FollowRun = {
+      hostId: currentSource.hostId,
+      sessionId: newSessionId(),
+      remote: currentSource.remote,
+      accepting: true,
+      stopping: false,
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // This must happen before the first await: historical request guards read it synchronously.
+    runRef.current = session;
+    useFollowModeStore.getState().setStartupError(null);
+    useFollowModeStore.getState().setDesiredSession(session);
+    const filterState = useFilterStore.getState();
+    filterState.setEntries([]);
+    filterState.setCursorEnd(null);
+    filterState.setHasMore(false);
+    filterState.setError(null);
 
-  // Restart follow mode when filter changes (to apply new filters)
-  // Use filtersEqual() for efficient comparison instead of JSON.stringify
-  useEffect(() => {
-    // Check if filter actually changed (using store state for singleton behavior)
-    if (filtersEqual(lastFilter, filter)) return;
-
-    // Update the stored filter immediately to prevent duplicate handling
-    const hadPreviousFilter = lastFilter !== null;
-    setLastFilter(filter);
-
-    // If following, debounce and restart with the new filter
-    if (isFollowing && hadPreviousFilter) {
-      // Clear any pending debounce timer
-      clearDebounceTimer();
-
-      // Debounce the restart to avoid rapid-fire restarts while sliding
-      const timer = setTimeout(() => {
-        // Check if a restart is already in progress (use fresh state)
-        const currentState = useFollowModeStore.getState();
-        if (currentState.restartInProgress) {
+    return enqueue(async () => {
+      try {
+        if (!ownsSession(session, intent)) return;
+        await setupListeners(
+          useFilterStore.getState().prependEntries,
+          useFilterStore.getState().setError,
+          useFilterStore.getState().setFollowing,
+          (candidate) => (
+            candidate.hostId === session.hostId
+            && candidate.sessionId === session.sessionId
+            && ownsSession(session, intent)
+          ),
+          (completed) => {
+            if (
+              completed.hostId === session.hostId
+              && completed.sessionId === session.sessionId
+              && ownsSession(session, intent)
+            ) {
+              release(completed);
+              useFilterStore.getState().setFollowPaused(false);
+            }
+          },
+        );
+        if (!ownsSession(session, intent)) {
+          if (runRef.current === session) cleanupListeners();
           return;
         }
 
-        setRestartInProgress(true);
-        // Use filterRef.current to get the LATEST filter value, not the stale closure value
-        const currentFilter = filterRef.current;
-
-        const restartFollow = async () => {
-          try {
-            // Don't call stopFollow() - just call startFollow() directly.
-            // The backend's start() method sets a 'restarting' flag before stopping
-            // the old process, which suppresses the 'journal-follow-stopped' event.
-            // If we called stopFollow() first, it would clear that flag and emit
-            // the stopped event, causing the UI to show follow as disabled.
-            if (isRemoteRef.current) {
-              // Retrieve password from keyring for remote follow
-              const hostId = connectedHostIdRef.current;
-              let password: string | undefined;
-              if (hostId) {
-                const savedPassword = await getHostPassword(hostId);
-                password = savedPassword ?? undefined;
-              }
-              await startRemoteFollow(currentFilter, password);
-            } else {
-              await startFollow(currentFilter);
-            }
-          } finally {
-            setRestartInProgress(false);
+        if (session.remote) {
+          const password = (await getHostPassword(session.hostId)) ?? undefined;
+          if (!ownsSession(session, intent)) {
+            if (runRef.current === session) cleanupListeners();
+            return;
           }
-        };
+          await startRemoteFollow(session.hostId, requestedFilter, session.sessionId, password);
+        } else {
+          await startFollow(requestedFilter, session.sessionId);
+        }
+        if (!ownsSession(session, intent)) return;
+        const state = useFilterStore.getState();
+        state.setFollowing(true);
+        state.setFollowPaused(false);
+      } catch (error) {
+        if (ownsSession(session, intent)) {
+          const message = `Failed to start follow mode: ${error instanceof Error ? error.message : String(error)}`;
+          useFollowModeStore.getState().setStartupError(message);
+          useFilterStore.getState().setError(message);
+          useFilterStore.getState().setFollowing(false);
+          release(session);
+        }
+      }
+    });
+  }, [enqueue, ownsSession, release]);
 
-        restartFollow().catch((err) => {
-          setRestartInProgress(false);
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          setError(`Failed to update follow filter: ${errorMessage}`);
-          setFollowing(false);
-        });
-      }, DEBOUNCE_MS);
+  const start = useCallback(() => {
+    if (runRef.current) return queueRef.current;
+    return begin(filterRef.current, invalidateRestartIntent());
+  }, [begin, invalidateRestartIntent]);
+  const stop = useCallback(() => requestStop(), [requestStop]);
+  const toggle = useCallback(() => (runRef.current && !runRef.current.stopping ? stop() : start()), [start, stop]);
 
-      setDebounceTimer(timer);
+  const pause = useCallback(() => {
+    const state = useFilterStore.getState();
+    if (state.isFollowing && !state.isFollowPaused) state.setFollowPaused(true);
+  }, []);
+  const resume = useCallback(() => {
+    const state = useFilterStore.getState();
+    if (state.isFollowing && state.isFollowPaused) state.setFollowPaused(false);
+  }, []);
+
+  useEffect(() => {
+    invalidateRestartIntent();
+    const run = runRef.current;
+    if (run && !sessionSourceIsCurrent(run)) {
+      requestStop(run, false);
     }
+  }, [invalidateRestartIntent, isOfflineMode, layout, requestStop, sourceKey]);
 
-    // Cleanup debounce timer on unmount or filter change
+  useEffect(() => {
+    const previous = previousFilterRef.current;
+    previousFilterRef.current = filter;
+    const run = runRef.current;
+    if (!previous || filtersEqual(previous, filter) || !run || run.stopping) return;
+
+    const intent = invalidateRestartIntent();
+    run.accepting = false;
+    const state = useFilterStore.getState();
+    state.setEntries([]);
+    state.setCursorEnd(null);
+    state.setHasMore(false);
+
+    restartTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current || restartIntentRef.current !== intent) return;
+      const currentRun = runRef.current;
+      if (!currentRun || currentRun !== run || currentRun.stopping) return;
+      currentRun.stopping = true;
+      const current = useFilterStore.getState();
+      current.setEntries([]);
+      current.setCursorEnd(null);
+      current.setHasMore(false);
+      enqueue(async () => {
+        await stopRun(currentRun);
+        if (mountedRef.current && restartIntentRef.current === intent) {
+          void begin(filterRef.current, intent);
+        }
+      });
+    }, DEBOUNCE_MS);
+  }, [begin, enqueue, filter, invalidateRestartIntent, stopRun]);
+
+  useEffect(() => {
+    mountedRef.current = true;
     return () => {
-      clearDebounceTimer();
+      mountedRef.current = false;
+      invalidateRestartIntent();
+      requestStop(undefined, false);
+      cleanupListeners();
     };
-  }, [
-    filter,
-    isFollowing,
-    lastFilter,
-    setLastFilter,
-    setRestartInProgress,
-    clearDebounceTimer,
-    setDebounceTimer,
-    setError,
-    setFollowing,
-  ]);
+  }, [invalidateRestartIntent, requestStop]);
 
-  return {
-    isFollowing,
-    isFollowPaused,
-    start,
-    stop,
-    toggle,
-    pause,
-    resume,
-  };
+  return { isFollowing, isFollowPaused, start, stop, toggle, pause, resume, isAvailable: followAvailable };
 }

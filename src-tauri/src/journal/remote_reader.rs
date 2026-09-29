@@ -1,5 +1,6 @@
 use crate::error::JournalError;
-use crate::journal::parser::{get_priority, get_timestamp, parse_entry};
+use crate::journal::pagination::{scan_page, RawPage};
+use crate::journal::parser::{get_priority, get_timestamp, matches_post_filters, parse_entry};
 use crate::journal::shell_escape::escape_arg;
 use crate::journal::ssh::ConnectionManager;
 use crate::journal::types::{
@@ -97,135 +98,122 @@ impl RemoteJournalReader {
         conn: &ConnectionManager,
         filter: &JournalFilter,
     ) -> Result<JournalQueryResult, JournalError> {
-        // Validate regex if present
         if let Some(pattern) = &filter.grep_pattern {
             if !pattern.is_empty() && Regex::new(pattern).is_err() {
                 return Err(JournalError::InvalidRegex(pattern.clone()));
             }
         }
 
-        // Fetch extra entries to determine if there are more
-        let fetch_limit = if filter.excluded_units.is_empty() {
-            filter.limit + 1
+        let minimum_timestamp = if filter.since.is_some() {
+            match Self::probe_since(conn, filter)? {
+                Some(timestamp) => Some(timestamp),
+                None => return Ok(Self::empty_query_result()),
+            }
         } else {
-            (filter.limit * 3) + 1
+            None
         };
 
-        let cmd = Self::build_command_args(filter, &["-n", &fetch_limit.to_string()]);
-        let output = conn.run_command(&cmd)?;
+        scan_page(filter, minimum_timestamp, |cursor, page_size| {
+            Self::fetch_raw_page(conn, filter, cursor, cursor.is_none(), filter.reverse, page_size)
+        })
+    }
+
+    fn probe_since(
+        conn: &ConnectionManager,
+        filter: &JournalFilter,
+    ) -> Result<Option<i64>, JournalError> {
+        Ok(Self::fetch_raw_page(conn, filter, None, true, false, 1)?
+            .entries
+            .into_iter()
+            .next()
+            .map(|entry| entry.realtime_timestamp))
+    }
+
+    fn fetch_raw_page(
+        conn: &ConnectionManager,
+        filter: &JournalFilter,
+        cursor: Option<&str>,
+        include_since: bool,
+        reverse: bool,
+        page_size: u32,
+    ) -> Result<RawPage, JournalError> {
+        let mut raw_filter = filter.clone();
+        raw_filter.after_cursor = cursor.map(str::to_owned);
+        raw_filter.reverse = reverse;
+        if !include_since {
+            raw_filter.since = None;
+        }
+        let use_oldest_first_limit = !reverse
+            && (cursor.is_none()
+                || filter
+                    .grep_pattern
+                    .as_deref()
+                    .is_some_and(|pattern| !pattern.is_empty()));
+        let page_size = if use_oldest_first_limit {
+            format!("+{page_size}")
+        } else {
+            page_size.to_string()
+        };
+        let command = Self::build_command_args(&raw_filter, &["-n", &page_size]);
+        let output = conn.run_command(&command)?;
 
         let mut entries = Vec::new();
+        let mut scanned = 0;
         for line in output.lines() {
             if line.trim().is_empty() {
                 continue;
             }
-
+            scanned += 1;
             match parse_entry(line) {
-                Ok(entry) => {
-                    // Filter out excluded units
-                    if !filter.excluded_units.is_empty() {
-                        if let Some(ref unit) = entry.systemd_unit {
-                            if filter.excluded_units.contains(unit) {
-                                continue;
-                            }
-                        }
-                    }
-                    entries.push(entry);
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to parse journal entry: {}", e);
-                    continue;
-                }
+                Ok(entry) => entries.push(entry),
+                Err(error) => eprintln!("Warning: Failed to parse journal entry: {error}"),
             }
         }
-
-        let has_more = entries.len() > filter.limit as usize;
-        entries.truncate(filter.limit as usize);
-
-        let cursor_start = entries.first().map(|e| e.cursor.clone());
-        let cursor_end = entries.last().map(|e| e.cursor.clone());
-
-        Ok(JournalQueryResult {
+        let last_cursor = entries
+            .last()
+            .and_then(|entry| (!entry.cursor.is_empty()).then(|| entry.cursor.clone()));
+        Ok(RawPage {
             entries,
-            has_more,
-            cursor_start,
-            cursor_end,
+            scanned,
+            last_cursor,
         })
     }
 
-    /// Count journal entries matching a filter
-    pub fn count(conn: &ConnectionManager, filter: &JournalFilter) -> Result<u64, JournalError> {
-        if !filter.excluded_units.is_empty() {
-            // Need to fetch and filter
-            let cmd = Self::build_command_args(filter, &[]);
-            let output = conn.run_command(&cmd)?;
-
-            let count = output
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .filter(|line| {
-                    if let Ok(value) = serde_json::from_str::<Value>(line) {
-                        if let Some(unit) = value.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
-                            return !filter.excluded_units.contains(&unit.to_string());
-                        }
-                    }
-                    true
-                })
-                .count() as u64;
-
-            Ok(count)
-        } else {
-            // Use cat output for faster counting
-            let cmd = format!(
-                "journalctl --no-pager -q --output=cat {}",
-                Self::build_filter_args(filter)
-            );
-            let output = conn.run_command(&cmd)?;
-            Ok(output.lines().count() as u64)
+    fn empty_query_result() -> JournalQueryResult {
+        JournalQueryResult {
+            entries: Vec::new(),
+            has_more: false,
+            cursor_start: None,
+            cursor_end: None,
         }
     }
 
-    fn build_filter_args(filter: &JournalFilter) -> String {
-        let mut args = Vec::new();
-
-        // Escape all user-provided values to prevent command injection
-        for unit in &filter.units {
-            args.push(format!("-u {}", escape_arg(unit)));
-        }
-
-        // Priority is numeric, safe to use directly
-        if !filter.priorities.is_empty() {
-            let min = filter.priorities.iter().min().unwrap();
-            let max = filter.priorities.iter().max().unwrap();
-            args.push(format!("-p {}..{}", min, max));
-        }
-
-        if let Some(since) = &filter.since {
-            args.push(format!("-S {}", escape_arg(since)));
-        }
-
-        if let Some(until) = &filter.until {
-            args.push(format!("-U {}", escape_arg(until)));
-        }
-
-        if let Some(boot_id) = &filter.boot_id {
-            args.push(format!("-b {}", escape_arg(boot_id)));
-        } else if let Some(offset) = filter.boot_offset {
-            // Numeric offset is safe
-            args.push(format!("-b {}", offset));
-        }
-
+    /// Count journal entries matching a filter.
+    pub fn count(conn: &ConnectionManager, filter: &JournalFilter) -> Result<u64, JournalError> {
         if let Some(pattern) = &filter.grep_pattern {
-            if !pattern.is_empty() {
-                args.push(format!("-g {}", escape_arg(pattern)));
-                if !filter.case_sensitive {
-                    args.push("--case-sensitive=false".to_string());
-                }
+            if !pattern.is_empty() && Regex::new(pattern).is_err() {
+                return Err(JournalError::InvalidRegex(pattern.clone()));
             }
         }
 
-        args.join(" ")
+        let mut count_filter = filter.clone();
+        count_filter.after_cursor = None;
+        count_filter.reverse = false;
+        let output = conn.run_command(&Self::build_command_args(&count_filter, &[]))?;
+        Ok(output
+            .lines()
+            .filter_map(|line| parse_entry(line).ok())
+            .filter(|entry| {
+                matches_post_filters(
+                    &filter.excluded_units,
+                    &filter.priorities,
+                    entry.systemd_unit.as_deref(),
+                    entry.priority,
+                )
+            })
+            .count() as u64)
     }
+
 
     /// List available systemd units from a remote host
     pub fn list_units(conn: &ConnectionManager) -> Result<Vec<SystemUnit>, JournalError> {
@@ -322,13 +310,14 @@ impl RemoteJournalReader {
                 Err(_) => continue,
             };
 
-            // Check excluded units
-            if !filter.excluded_units.is_empty() {
-                if let Some(unit) = value.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
-                    if filter.excluded_units.contains(&unit.to_string()) {
-                        continue;
-                    }
-                }
+            let priority = get_priority(&value);
+            if !matches_post_filters(
+                &filter.excluded_units,
+                &filter.priorities,
+                value.get("_SYSTEMD_UNIT").and_then(|value| value.as_str()),
+                priority,
+            ) {
+                continue;
             }
 
             total_count += 1;
@@ -336,8 +325,6 @@ impl RemoteJournalReader {
             let timestamp = get_timestamp(&value, "__REALTIME_TIMESTAMP");
             let timestamp_ms = timestamp / 1000;
             let bucket = (timestamp_ms / granularity_ms) * granularity_ms;
-
-            let priority = get_priority(&value);
             let is_error = priority <= 3;
             let is_warning = priority == 4;
 

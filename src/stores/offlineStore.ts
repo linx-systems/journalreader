@@ -13,12 +13,26 @@ import {
   getAllStorageStats,
   getOfflineSettings as getOfflineSettingsApi,
   updateOfflineSettings as updateOfflineSettingsApi,
-  isOfflineMode as isOfflineModeApi,
-  setOfflineMode as setOfflineModeApi,
   triggerSync as triggerSyncApi,
   cancelSync as cancelSyncApi,
   deleteOfflineLogs as deleteOfflineLogsApi,
 } from '../lib/offlineTauri';
+
+
+interface SyncAttempt {
+  hostId: string;
+  syncEpoch: number;
+  generation: number;
+}
+
+function ownsCurrentSync(state: OfflineStore, attempt: SyncAttempt | null): boolean {
+  return (
+    attempt !== null &&
+    state.currentSyncAttempt?.hostId === attempt.hostId &&
+    state.currentSyncAttempt.syncEpoch === attempt.syncEpoch &&
+    state.currentSyncAttempt.generation === attempt.generation
+  );
+}
 
 interface OfflineStore {
   // State
@@ -32,6 +46,16 @@ interface OfflineStore {
   settings: OfflineSettings;
   /** Current sync progress (null if no sync in progress) */
   currentSync: SyncProgressEvent | null;
+  /** Local attempt that owns optimistic current sync progress. */
+  currentSyncAttempt: SyncAttempt | null;
+  /** Monotonic generation assigned to locally initiated sync attempts. */
+  nextSyncGeneration: number;
+  /** Per-host invalidation generations for deleted sync work. */
+  syncEpochs: Map<string, number>;
+  /** Hosts whose stale progress events must not restore deleted state. */
+  invalidatedSyncHosts: Set<string>;
+  /** Sync generation that owns each deleted host's invalidation. */
+  invalidatedSyncEpochs: Map<string, number>;
   /** Loading states */
   isLoadingSyncStates: boolean;
   isLoadingStorageStats: boolean;
@@ -41,9 +65,8 @@ interface OfflineStore {
   storageStatsError: string | null;
   settingsError: string | null;
 
-  // Actions
-  /** Set offline mode */
-  setOfflineMode: (offline: boolean) => Promise<void>;
+  /** Set persisted frontend mode synchronously. */
+  setOfflineMode: (offline: boolean) => void;
   /** Load sync states from backend */
   loadSyncStates: () => Promise<void>;
   /** Load storage statistics from backend */
@@ -73,6 +96,11 @@ export const useOfflineStore = create<OfflineStore>()(
       storageStats: new Map(),
       settings: DEFAULT_OFFLINE_SETTINGS,
       currentSync: null,
+      currentSyncAttempt: null,
+      nextSyncGeneration: 1,
+      syncEpochs: new Map(),
+      invalidatedSyncHosts: new Set(),
+      invalidatedSyncEpochs: new Map(),
       isLoadingSyncStates: false,
       isLoadingStorageStats: false,
       isLoadingSettings: false,
@@ -80,16 +108,8 @@ export const useOfflineStore = create<OfflineStore>()(
       storageStatsError: null,
       settingsError: null,
 
-      setOfflineMode: async (offline: boolean) => {
-        try {
-          await setOfflineModeApi(offline);
-          set({ isOfflineMode: offline });
-        } catch (error) {
-          // Still update local state on error for optimistic update reversal
-          const wasOffline = await isOfflineModeApi().catch(() => get().isOfflineMode);
-          set({ isOfflineMode: wasOffline });
-          throw error;
-        }
+      setOfflineMode: (offline: boolean) => {
+        set({ isOfflineMode: offline });
       },
 
       loadSyncStates: async () => {
@@ -151,22 +171,62 @@ export const useOfflineStore = create<OfflineStore>()(
       },
 
       triggerSync: async (hostId: string) => {
-        // Update local sync state to in_progress
-        const { syncStates } = get();
-        const currentState = syncStates.get(hostId);
-        const newSyncStates = new Map(syncStates);
-        newSyncStates.set(hostId, {
-          hostId,
-          lastSyncTimestamp: currentState?.lastSyncTimestamp ?? 0,
-          lastCursor: currentState?.lastCursor ?? null,
-          syncStatus: 'in_progress',
-          syncError: null,
-          entriesSynced: currentState?.entriesSynced ?? 0,
-        });
-        set({ syncStates: newSyncStates });
+        const currentState = get().syncStates.get(hostId);
+        const syncEpoch = get().syncEpochs.get(hostId) ?? 0;
+        const activeSync = get().currentSync;
+        const concurrentSyncIsActive =
+          activeSync?.status === 'starting' || activeSync?.status === 'fetching';
+        let attempt: SyncAttempt | null = null;
+        if (!concurrentSyncIsActive) {
+          attempt = {
+            hostId,
+            syncEpoch,
+            generation: get().nextSyncGeneration,
+          };
+          const newSyncStates = new Map(get().syncStates);
+          newSyncStates.set(hostId, {
+            hostId,
+            lastSyncTimestamp: currentState?.lastSyncTimestamp ?? 0,
+            lastCursor: currentState?.lastCursor ?? null,
+            syncStatus: 'in_progress',
+            syncError: null,
+            entriesSynced: currentState?.entriesSynced ?? 0,
+          });
+          set({
+            syncStates: newSyncStates,
+            currentSync: {
+              hostId,
+              status: 'starting',
+              entriesSynced: 0,
+              totalEntries: currentState?.entriesSynced ?? 0,
+              batchSize: 0,
+              error: null,
+            },
+            currentSyncAttempt: attempt,
+            nextSyncGeneration: attempt.generation + 1,
+          });
+        }
 
         try {
           const result = await triggerSyncApi(hostId);
+
+          if ((get().syncEpochs.get(hostId) ?? 0) !== syncEpoch) {
+            const state = get();
+            const invalidatedSyncHosts = new Set(state.invalidatedSyncHosts);
+            const invalidatedSyncEpochs = new Map(state.invalidatedSyncEpochs);
+            if (invalidatedSyncEpochs.get(hostId) === syncEpoch) {
+              invalidatedSyncHosts.delete(hostId);
+              invalidatedSyncEpochs.delete(hostId);
+            }
+            const attemptOwnsProgress = ownsCurrentSync(state, attempt);
+            set({
+              currentSync: attemptOwnsProgress ? null : state.currentSync,
+              currentSyncAttempt: attemptOwnsProgress ? null : state.currentSyncAttempt,
+              invalidatedSyncHosts,
+              invalidatedSyncEpochs,
+            });
+            return result;
+          }
 
           // Update sync state based on result
           const updatedStates = new Map(get().syncStates);
@@ -178,13 +238,44 @@ export const useOfflineStore = create<OfflineStore>()(
             syncError: result.error,
             entriesSynced: result.totalEntries,
           });
-          set({ syncStates: updatedStates, currentSync: null });
+          const state = get();
+          const attemptOwnsProgress = ownsCurrentSync(state, attempt);
+          set({
+            syncStates: updatedStates,
+            currentSync: attemptOwnsProgress ? null : state.currentSync,
+            currentSyncAttempt: attemptOwnsProgress ? null : state.currentSyncAttempt,
+          });
 
           // Reload storage stats after sync
           await get().loadStorageStats();
 
           return result;
         } catch (error) {
+          if ((get().syncEpochs.get(hostId) ?? 0) !== syncEpoch) {
+            const state = get();
+            const invalidatedSyncHosts = new Set(state.invalidatedSyncHosts);
+            const invalidatedSyncEpochs = new Map(state.invalidatedSyncEpochs);
+            if (invalidatedSyncEpochs.get(hostId) === syncEpoch) {
+              invalidatedSyncHosts.delete(hostId);
+              invalidatedSyncEpochs.delete(hostId);
+            }
+            const attemptOwnsProgress = ownsCurrentSync(state, attempt);
+            set({
+              currentSync: attemptOwnsProgress ? null : state.currentSync,
+              currentSyncAttempt: attemptOwnsProgress ? null : state.currentSyncAttempt,
+              invalidatedSyncHosts,
+              invalidatedSyncEpochs,
+            });
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+
+          // The backend rejected a second start. Its active worker owns the
+          // current progress, so neither replace nor clear it locally.
+          if (concurrentSyncIsActive && message.includes('A sync is already running.')) {
+            throw error;
+          }
+
           // Update sync state to failed
           const updatedStates = new Map(get().syncStates);
           updatedStates.set(hostId, {
@@ -192,10 +283,16 @@ export const useOfflineStore = create<OfflineStore>()(
             lastSyncTimestamp: currentState?.lastSyncTimestamp ?? 0,
             lastCursor: currentState?.lastCursor ?? null,
             syncStatus: 'failed',
-            syncError: error instanceof Error ? error.message : String(error),
+            syncError: message,
             entriesSynced: currentState?.entriesSynced ?? 0,
           });
-          set({ syncStates: updatedStates, currentSync: null });
+          const state = get();
+          const attemptOwnsProgress = ownsCurrentSync(state, attempt);
+          set({
+            syncStates: updatedStates,
+            currentSync: attemptOwnsProgress ? null : state.currentSync,
+            currentSyncAttempt: attemptOwnsProgress ? null : state.currentSyncAttempt,
+          });
           throw error;
         }
       },
@@ -206,31 +303,88 @@ export const useOfflineStore = create<OfflineStore>()(
       },
 
       deleteOfflineLogs: async (hostId: string) => {
-        const deleted = await deleteOfflineLogsApi(hostId);
+        const state = get();
+        const syncEpochs = new Map(state.syncEpochs);
+        const syncEpoch = syncEpochs.get(hostId) ?? 0;
+        const deletionEpoch = syncEpoch + 1;
+        syncEpochs.set(hostId, deletionEpoch);
+        const invalidatedSyncHosts = new Set(state.invalidatedSyncHosts);
+        const invalidatedSyncEpochs = new Map(state.invalidatedSyncEpochs);
+        invalidatedSyncHosts.add(hostId);
+        const syncIsActive =
+          state.currentSync?.hostId === hostId &&
+          (state.currentSync.status === 'starting' || state.currentSync.status === 'fetching');
+        if (syncIsActive && !invalidatedSyncEpochs.has(hostId)) {
+          invalidatedSyncEpochs.set(hostId, syncEpoch);
+        }
+        set({ syncEpochs, invalidatedSyncHosts, invalidatedSyncEpochs });
 
-        // Update storage stats
-        const { storageStats, syncStates } = get();
-        const newStorageStats = new Map(storageStats);
-        newStorageStats.delete(hostId);
+        try {
+          const deleted = await deleteOfflineLogsApi(hostId);
 
-        // Reset sync state for this host
-        const newSyncStates = new Map(syncStates);
-        newSyncStates.set(hostId, {
-          hostId,
-          lastSyncTimestamp: 0,
-          lastCursor: null,
-          syncStatus: 'never',
-          syncError: null,
-          entriesSynced: 0,
-        });
+          // Update storage stats using the current state. A stale worker may
+          // complete while deletion is in flight and release its invalidation.
+          const state = get();
+          const newStorageStats = new Map(state.storageStats);
+          newStorageStats.delete(hostId);
 
-        set({ storageStats: newStorageStats, syncStates: newSyncStates });
-        return deleted;
+          // Reset sync state for this host
+          const newSyncStates = new Map(state.syncStates);
+          newSyncStates.set(hostId, {
+            hostId,
+            lastSyncTimestamp: 0,
+            lastCursor: null,
+            syncStatus: 'never',
+            syncError: null,
+            entriesSynced: 0,
+          });
+
+          const currentInvalidatedSyncHosts = new Set(state.invalidatedSyncHosts);
+          const currentInvalidatedSyncEpochs = new Map(state.invalidatedSyncEpochs);
+          const syncIsStillActive =
+            state.currentSync?.hostId === hostId &&
+            (state.currentSync.status === 'starting' || state.currentSync.status === 'fetching');
+          const invalidationHasActiveOwner =
+            syncIsStillActive && currentInvalidatedSyncEpochs.has(hostId);
+          if (
+            !invalidationHasActiveOwner &&
+            (state.syncEpochs.get(hostId) ?? 0) === deletionEpoch
+          ) {
+            currentInvalidatedSyncHosts.delete(hostId);
+            currentInvalidatedSyncEpochs.delete(hostId);
+          }
+          set({
+            storageStats: newStorageStats,
+            syncStates: newSyncStates,
+            invalidatedSyncHosts: currentInvalidatedSyncHosts,
+            invalidatedSyncEpochs: currentInvalidatedSyncEpochs,
+          });
+          return deleted;
+        } catch (error) {
+          const state = get();
+          if ((state.syncEpochs.get(hostId) ?? 0) === deletionEpoch) {
+            const invalidatedSyncHosts = new Set(state.invalidatedSyncHosts);
+            const invalidatedSyncEpochs = new Map(state.invalidatedSyncEpochs);
+            invalidatedSyncHosts.delete(hostId);
+            invalidatedSyncEpochs.delete(hostId);
+            set({ invalidatedSyncHosts, invalidatedSyncEpochs });
+          }
+          throw error;
+        }
       },
 
       updateSyncProgress: (progress: SyncProgressEvent | null) => {
-        set({ currentSync: progress });
-
+        const state = get();
+        if (progress && state.invalidatedSyncHosts.has(progress.hostId)) {
+          return;
+        }
+        set({
+          currentSync: progress,
+          currentSyncAttempt:
+            progress && state.currentSyncAttempt?.hostId === progress.hostId
+              ? state.currentSyncAttempt
+              : null,
+        });
         // Also update the sync state for the host if progress is provided
         if (progress) {
           const { syncStates } = get();

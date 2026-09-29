@@ -9,8 +9,8 @@ use commands::journal::{
 use commands::offline::{
     apply_retention_all, apply_retention_now, delete_offline_logs, export_offline_logs,
     get_all_storage_stats, get_all_sync_states, get_offline_log_count, get_offline_settings,
-    get_retention_policy, get_storage_stats, get_sync_state, is_offline_mode,
-    query_offline_journal, set_offline_mode, update_offline_settings,
+    get_retention_policy, get_storage_stats, get_sync_state, query_offline_journal,
+    update_offline_settings,
 };
 use commands::sync::{
     can_resume_sync, cancel_sync, trigger_sync, trigger_sync_all, SyncCancelState,
@@ -18,7 +18,7 @@ use commands::sync::{
 use commands::remote::{
     accept_host_key, add_remote_host, connect_to_host, connect_to_host_accept_key,
     delete_host_password, delete_remote_host, disconnect_from_host, fetch_host_key,
-    get_connection_state, get_following_hosts, get_host_key_info, get_host_password, get_remote_host,
+    get_connection_state, get_host_key_info, get_host_password, get_remote_host,
     get_remote_log_count, get_remote_statistics, is_keyring_available, is_remote_following,
     list_remote_boots, list_remote_hosts, list_remote_units, query_remote_journal, remove_host_key,
     save_host_password, start_remote_follow, stop_remote_follow, test_current_connection,
@@ -31,7 +31,7 @@ use journal::{
     JournalFollower, RemoteJournalFollower,
 };
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -63,14 +63,14 @@ pub fn run() {
             Ok(())
         })
         // Local journal state
-        .manage(FollowerState(Mutex::new(JournalFollower::new())))
+        .manage(FollowerState(Arc::new(Mutex::new(JournalFollower::new()))))
         // Remote host state
         .manage(HostStorageState(host_storage))
         .manage(KnownHostsStorageState(known_hosts.clone()))
         .manage(ConnectionManagerState(new_shared_connection_manager(
             known_hosts,
         )))
-        .manage(RemoteFollowersState(Mutex::new(HashMap::<String, RemoteJournalFollower>::new())))
+        .manage(RemoteFollowersState(Arc::new(Mutex::new(HashMap::<String, RemoteJournalFollower>::new()))))
         // Offline database state
         .manage(OfflineDatabaseState(offline_db))
         // Sync cancellation state
@@ -112,7 +112,6 @@ pub fn run() {
             start_remote_follow,
             stop_remote_follow,
             is_remote_following,
-            get_following_hosts,
             // Keyring commands (secure password storage)
             is_keyring_available,
             save_host_password,
@@ -128,8 +127,6 @@ pub fn run() {
             delete_offline_logs,
             get_offline_settings,
             update_offline_settings,
-            is_offline_mode,
-            set_offline_mode,
             // Retention commands
             apply_retention_now,
             apply_retention_all,

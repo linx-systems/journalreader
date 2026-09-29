@@ -1,821 +1,310 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { useJournalLogs } from '../useJournalLogs';
-import type { JournalFilter, JournalEntry } from '../../lib/types';
-import { DEBOUNCE_MS } from '../../lib/constants';
+import { useFilterStore } from '../../stores/filterStore';
+import { LOCAL_TAB_ID, useConnectionStore } from '../../stores/connectionStore';
+import { useOfflineStore } from '../../stores/offlineStore';
+import { useScrollSyncStore } from '../../stores/scrollSyncStore';
+import { useFollowModeStore } from '../../stores/followModeStore';
+import { useLayoutStore } from '../../stores/layoutStore';
+import { SCROLL_SYNC_OFFSET_MS, DEBOUNCE_MS } from '../../lib/constants';
+import type { JournalEntry, JournalFilter } from '../../lib/types';
 
-// Mock the stores
-vi.mock('../../stores/filterStore');
-vi.mock('../../stores/connectionStore');
-vi.mock('../../stores/offlineStore');
-vi.mock('../../stores/scrollSyncStore');
-
-// Mock the tauri modules
 vi.mock('../../lib/tauri', () => ({
   queryJournal: vi.fn(),
   queryRemoteJournal: vi.fn(),
 }));
-
 vi.mock('../../lib/offlineTauri', () => ({
   queryOfflineJournal: vi.fn(),
 }));
 
-import { useFilterStore } from '../../stores/filterStore';
-import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
-import { useOfflineStore } from '../../stores/offlineStore';
-import { useScrollSyncStore } from '../../stores/scrollSyncStore';
 import { queryJournal, queryRemoteJournal } from '../../lib/tauri';
 import { queryOfflineJournal } from '../../lib/offlineTauri';
 
-const mockUseFilterStore = vi.mocked(useFilterStore);
-const mockUseConnectionStore = vi.mocked(useConnectionStore);
-const mockUseOfflineStore = vi.mocked(useOfflineStore);
-const mockUseScrollSyncStore = vi.mocked(useScrollSyncStore);
 const mockQueryJournal = vi.mocked(queryJournal);
 const mockQueryRemoteJournal = vi.mocked(queryRemoteJournal);
 const mockQueryOfflineJournal = vi.mocked(queryOfflineJournal);
 
-const createFilter = (overrides: Partial<JournalFilter> = {}): JournalFilter => ({
-  units: [],
-  excludedUnits: [],
-  caseSensitive: false,
-  limit: 500,
-  reverse: true,
-  ...overrides,
-});
+function testFilter(overrides: Partial<JournalFilter> = {}): JournalFilter {
+  return {
+    units: [],
+    excludedUnits: [],
+    caseSensitive: false,
+    limit: 500,
+    reverse: true,
+    ...overrides,
+  };
+}
 
-const createEntry = (cursor: string): JournalEntry => ({
-  cursor,
-  realtimeTimestamp: Date.now() * 1000,
-  bootId: 'boot-1',
-  message: `Message ${cursor}`,
-  priority: 6,
-});
+function result(cursor = 'cursor') {
+  return { entries: [], hasMore: false, cursorEnd: cursor };
+}
 
-const createMockFilterStore = (overrides: Partial<ReturnType<typeof useFilterStore>> = {}) => ({
-  filter: createFilter(),
-  entries: [],
-  isLoading: false,
-  error: null,
-  hasMore: false,
-  cursorEnd: null,
-  isFollowing: false,
-  setEntries: vi.fn(),
-  appendEntries: vi.fn(),
-  setLoading: vi.fn(),
-  setError: vi.fn(),
-  setHasMore: vi.fn(),
-  setCursorEnd: vi.fn(),
-  ...overrides,
-});
+function entry(cursor: string): JournalEntry {
+  return {
+    cursor,
+    realtimeTimestamp: 1,
+    bootId: 'boot',
+    message: cursor,
+    priority: 6,
+  };
+}
 
-const createMockConnectionStore = (overrides: Partial<ReturnType<typeof useConnectionStore>> = {}) => ({
-  connectedHostId: null,
-  connectionStatus: 'disconnected' as const,
-  activeTabId: LOCAL_TAB_ID,
-  ...overrides,
-});
-
-const createMockOfflineStore = (overrides: Partial<ReturnType<typeof useOfflineStore>> = {}) => ({
-  isOfflineMode: false,
-  setOfflineMode: vi.fn().mockResolvedValue(undefined),
-  ...overrides,
-});
-
-const createMockScrollSyncStore = (overrides: Partial<ReturnType<typeof useScrollSyncStore>> = {}) => ({
-  syncEnabled: false,
-  anchorTimestamp: null,
-  ...overrides,
-});
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 describe('useJournalLogs', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-
-    // Default mock implementations
-    mockQueryJournal.mockResolvedValue({
-      entries: [createEntry('1'), createEntry('2')],
-      hasMore: true,
-      cursorEnd: '2',
-    });
-    mockQueryRemoteJournal.mockResolvedValue({
-      entries: [createEntry('r1'), createEntry('r2')],
-      hasMore: true,
-      cursorEnd: 'r2',
-    });
-    mockQueryOfflineJournal.mockResolvedValue({
-      entries: [createEntry('o1'), createEntry('o2')],
+    useFilterStore.setState({
+      filter: testFilter(),
+      entries: [],
+      isLoading: false,
+      error: null,
       hasMore: false,
-      cursorEnd: 'o2',
+      cursorEnd: null,
+      isFollowing: false,
+      isFollowPaused: false,
     });
+    useConnectionStore.setState({
+      activeTabId: LOCAL_TAB_ID,
+      connectedHostId: null,
+      connectionStatus: 'disconnected',
+    });
+    useOfflineStore.setState({ isOfflineMode: false });
+    useScrollSyncStore.setState({ syncEnabled: false, anchorTimestamp: null });
+    useFollowModeStore.setState({ desiredSession: null, startupError: null });
+    useLayoutStore.setState({ layout: 'single', leftPanelHostId: null, rightPanelHostId: null });
+    mockQueryJournal.mockResolvedValue(result());
+    mockQueryRemoteJournal.mockResolvedValue(result());
+    mockQueryOfflineJournal.mockResolvedValue(result());
   });
 
   afterEach(() => {
+    cleanup();
     vi.useRealTimers();
   });
 
-  describe('initial load', () => {
-    it('fetches journal entries on initial render', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      // Wait for initial fetch triggered by useFilterDebounce
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(mockQueryJournal).toHaveBeenCalled();
-      expect(filterStore.setEntries).toHaveBeenCalled();
+  it('loads page one immediately and exposes only controls', async () => {
+    const { result: hook } = renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
     });
 
-    it('sets loading state during fetch', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(filterStore.setLoading).toHaveBeenCalledWith(true);
-      expect(filterStore.setLoading).toHaveBeenLastCalledWith(false);
-    });
-
-    it('clears error at start of fetch', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(filterStore.setError).toHaveBeenCalledWith(null);
-    });
+    expect(mockQueryJournal).toHaveBeenCalledWith(testFilter());
+    expect(Object.keys(hook.current).sort()).toEqual(['canRetry', 'loadMore', 'refresh', 'retry']);
   });
 
-  describe('data source selection', () => {
-    it('queries local journal when activeTabId is LOCAL_TAB_ID', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: LOCAL_TAB_ID,
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(mockQueryJournal).toHaveBeenCalled();
-      expect(mockQueryRemoteJournal).not.toHaveBeenCalled();
-      expect(mockQueryOfflineJournal).not.toHaveBeenCalled();
+  it('loads again when re-enabled with unchanged filters', async () => {
+    const { rerender } = renderHook(({ enabled }) => useJournalLogs(enabled), {
+      initialProps: { enabled: false },
     });
-
-    it('queries remote journal when connected to remote host', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: 'remote-host-1',
-        connectedHostId: 'remote-host-1',
-        connectionStatus: 'connected',
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(mockQueryRemoteJournal).toHaveBeenCalled();
-      expect(mockQueryJournal).not.toHaveBeenCalled();
+    await act(async () => {
+      await Promise.resolve();
     });
+    expect(mockQueryJournal).not.toHaveBeenCalled();
 
-    it('queries offline journal when in offline mode', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: 'remote-host-1',
-        connectedHostId: null,
-        connectionStatus: 'disconnected',
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore({
-        isOfflineMode: true,
-      }) as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(mockQueryOfflineJournal).toHaveBeenCalledWith('remote-host-1', expect.any(Object));
-      expect(mockQueryJournal).not.toHaveBeenCalled();
-      expect(mockQueryRemoteJournal).not.toHaveBeenCalled();
+    rerender({ enabled: true });
+    await act(async () => {
+      await Promise.resolve();
     });
-
-    it('queries offline journal when remote but not connected', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: 'remote-host-1',
-        connectedHostId: null,
-        connectionStatus: 'disconnected',
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore({
-        isOfflineMode: false,
-      }) as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should use offline query because isEffectivelyOffline = true
-      expect(mockQueryOfflineJournal).toHaveBeenCalledWith('remote-host-1', expect.any(Object));
-    });
-
-    it('detects isEffectivelyOffline when connected to different host', async () => {
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: 'remote-host-1',
-        connectedHostId: 'remote-host-2', // Connected to a different host
-        connectionStatus: 'connected',
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should use offline query because we're viewing host-1 but connected to host-2
-      expect(mockQueryOfflineJournal).toHaveBeenCalledWith('remote-host-1', expect.any(Object));
-    });
+    expect(mockQueryJournal).toHaveBeenCalledTimes(1);
   });
 
-  describe('filter changes', () => {
-    it('debounces filter changes', async () => {
-      const filter1 = createFilter({ since: '1 hour ago' });
-      const filter2 = createFilter({ since: '2 hours ago' });
-
-      let currentFilter = filter1;
-      const filterStore = createMockFilterStore({ filter: currentFilter });
-
-      mockUseFilterStore.mockImplementation(() => ({
-        ...filterStore,
-        filter: currentFilter,
-      }) as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { rerender } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-      const initialCalls = mockQueryJournal.mock.calls.length;
-
-      // Change filter
-      currentFilter = filter2;
-      rerender();
-
-      // Should not fetch immediately
-      expect(mockQueryJournal.mock.calls.length).toBe(initialCalls);
-
-      // Wait for debounce
-      await act(async () => {
-        vi.advanceTimersByTime(DEBOUNCE_MS);
-        await vi.runAllTimersAsync();
-      });
-
-      // Now should have fetched
-      expect(mockQueryJournal.mock.calls.length).toBeGreaterThan(initialCalls);
+  it('inhibits historical requests while a live session is desired', async () => {
+    useFollowModeStore.setState({ desiredSession: { hostId: 'local', sessionId: 'starting' } });
+    renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
     });
-
-    it('does not refetch when isFollowing is true (paused)', async () => {
-      const filterStore = createMockFilterStore({ isFollowing: true });
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should not fetch when in follow mode (paused)
-      expect(mockQueryJournal).not.toHaveBeenCalled();
-    });
+    expect(mockQueryJournal).not.toHaveBeenCalled();
   });
 
-  describe('loadMore (pagination)', () => {
-    it('loadMore appends entries when hasMore is true', async () => {
-      const filterStore = createMockFilterStore({
-        hasMore: true,
-        cursorEnd: 'cursor-1',
-        isLoading: false,
-      });
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { result } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      mockQueryJournal.mockClear();
-
-      // Call loadMore
-      await act(async () => {
-        result.current.loadMore();
-        await vi.runAllTimersAsync();
-      });
-
-      expect(mockQueryJournal).toHaveBeenCalledWith(
-        expect.objectContaining({ afterCursor: 'cursor-1' })
-      );
-      expect(filterStore.appendEntries).toHaveBeenCalled();
+  it('does not commit a pending page after a live session becomes desired', async () => {
+    const pending = deferred<{ entries: JournalEntry[]; hasMore: boolean; cursorEnd: string }>();
+    mockQueryJournal.mockReturnValueOnce(pending.promise);
+    renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
     });
 
-    it('loadMore does nothing when isLoading is true', async () => {
-      const filterStore = createMockFilterStore({
-        hasMore: true,
-        isLoading: true,
-      });
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { result } = renderHook(() => useJournalLogs());
-
-      // Skip initial fetch effect
-      mockQueryJournal.mockClear();
-
-      // Call loadMore while loading
-      result.current.loadMore();
-
-      // Should not trigger fetch
-      expect(mockQueryJournal).not.toHaveBeenCalled();
+    await act(async () => {
+      useFollowModeStore.setState({ desiredSession: { hostId: 'local', sessionId: 'starting' } });
+      pending.resolve({ entries: [entry('late-page')], hasMore: false, cursorEnd: 'late-page' });
+      await Promise.resolve();
     });
 
-    it('loadMore does nothing when hasMore is false', async () => {
-      const filterStore = createMockFilterStore({
-        hasMore: false,
-        isLoading: false,
-      });
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { result } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      mockQueryJournal.mockClear();
-
-      // Call loadMore when no more data
-      result.current.loadMore();
-
-      // Should not trigger fetch
-      expect(mockQueryJournal).not.toHaveBeenCalled();
-    });
+    expect(useFilterStore.getState().entries).toEqual([]);
+    expect(useFilterStore.getState().cursorEnd).not.toBe('late-page');
   });
 
-  describe('tab switching', () => {
-    it('clears entries and fetches when activeTabId changes', async () => {
-      let activeTabId = LOCAL_TAB_ID;
-      const filterStore = createMockFilterStore();
+  it('rejects an imperative refresh once a live session is desired', async () => {
+    const { result: hook } = renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    mockQueryJournal.mockClear();
+    useFollowModeStore.setState({ desiredSession: { hostId: 'local', sessionId: 'starting' } });
 
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockImplementation(() => createMockConnectionStore({
-        activeTabId,
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { rerender } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      filterStore.setEntries.mockClear();
-      filterStore.setCursorEnd.mockClear();
-      mockQueryJournal.mockClear();
-
-      // Switch tabs
-      activeTabId = 'remote-host-1';
-      rerender();
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should have cleared entries
-      expect(filterStore.setEntries).toHaveBeenCalledWith([]);
-      expect(filterStore.setCursorEnd).toHaveBeenCalledWith(null);
+    await act(async () => {
+      hook.current.refresh();
+      await Promise.resolve();
     });
 
-    it('applies scroll sync timestamp on tab switch when enabled', async () => {
-      let activeTabId = LOCAL_TAB_ID;
-      const anchorTimestamp = new Date('2024-01-01T12:00:00Z').getTime() * 1000;
-      const filterStore = createMockFilterStore();
-
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockImplementation(() => createMockConnectionStore({
-        activeTabId,
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore({
-        syncEnabled: true,
-        anchorTimestamp,
-      }) as ReturnType<typeof useScrollSyncStore>);
-
-      const { rerender } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      mockQueryJournal.mockClear();
-
-      // Switch tabs with scroll sync enabled
-      activeTabId = 'tab-2';
-      rerender();
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should have called with a since filter derived from anchor timestamp
-      const calls = mockQueryJournal.mock.calls;
-      if (calls.length > 0) {
-        const lastCall = calls[calls.length - 1][0];
-        // The syncAdjustedFilter should have been applied
-        expect(lastCall.since).toBeDefined();
-      }
-    });
-
-    it('does not apply scroll sync when disabled', async () => {
-      let activeTabId = LOCAL_TAB_ID;
-      const filterStore = createMockFilterStore();
-
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockImplementation(() => createMockConnectionStore({
-        activeTabId,
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore({
-        syncEnabled: false,
-        anchorTimestamp: Date.now() * 1000,
-      }) as ReturnType<typeof useScrollSyncStore>);
-
-      const { rerender } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      mockQueryJournal.mockClear();
-
-      // Switch tabs with scroll sync disabled
-      activeTabId = 'tab-2';
-      rerender();
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // The filter should use the store's filter, not sync-adjusted
-      // (this is tested implicitly - no syncAdjustedFilter applied)
-    });
+    expect(mockQueryJournal).not.toHaveBeenCalled();
   });
 
-  describe('offline mode changes', () => {
-    it('refetches when offline mode changes', async () => {
-      let isOfflineMode = false;
-      const filterStore = createMockFilterStore();
-      const offlineStore = createMockOfflineStore();
-
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: 'remote-host-1',
-        connectedHostId: 'remote-host-1',
-        connectionStatus: 'connected',
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockImplementation(() => ({
-        ...offlineStore,
-        isOfflineMode,
-      }) as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { rerender } = renderHook(() => useJournalLogs());
-
-      // Initial fetch (remote)
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      filterStore.setEntries.mockClear();
-      filterStore.setCursorEnd.mockClear();
-      mockQueryRemoteJournal.mockClear();
-      mockQueryOfflineJournal.mockClear();
-
-      // Switch to offline mode
-      isOfflineMode = true;
-      rerender();
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should have cleared entries
-      expect(filterStore.setEntries).toHaveBeenCalledWith([]);
-      expect(filterStore.setCursorEnd).toHaveBeenCalledWith(null);
+  it('rejects an imperative refresh once the main view switches to split mode', async () => {
+    const { result: hook } = renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
     });
+    mockQueryJournal.mockClear();
+
+    useLayoutStore.setState({ layout: 'split-vertical' });
+    await act(async () => {
+      hook.current.refresh();
+      await Promise.resolve();
+    });
+
+    expect(mockQueryJournal).not.toHaveBeenCalled();
   });
 
-  describe('error handling', () => {
-    it('sets error message on fetch failure via refresh', async () => {
-      // Use an error message that doesn't match connection error keywords
-      // to avoid triggering the offline fallback logic
-      mockQueryJournal.mockRejectedValue(new Error('Permission denied'));
-      const filterStore = createMockFilterStore();
+  it('uses the exact scroll-sync timestamp override on a tab replacement', async () => {
+    const anchorTimestamp = 1_700_000_000_123_000;
+    useConnectionStore.setState({
+      activeTabId: 'host-a',
+      connectedHostId: 'host-a',
+      connectionStatus: 'connected',
+    });
+    useScrollSyncStore.setState({ syncEnabled: true, anchorTimestamp });
+    const { rerender } = renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    mockQueryRemoteJournal.mockClear();
 
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { result } = renderHook(() => useJournalLogs());
-
-      // Call refresh explicitly to trigger fetch and error
-      await act(async () => {
-        result.current.refresh();
-      });
-
-      expect(filterStore.setError).toHaveBeenCalledWith('Permission denied');
+    useConnectionStore.setState({
+      activeTabId: 'host-b',
+      connectedHostId: 'host-b',
+      connectionStatus: 'connected',
+    });
+    rerender();
+    await act(async () => {
+      await Promise.resolve();
     });
 
-    it('falls back to offline mode on connection error from remote', async () => {
-      mockQueryRemoteJournal.mockRejectedValue(new Error('Connection refused'));
-      const filterStore = createMockFilterStore();
-      const offlineStore = createMockOfflineStore();
-
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: 'remote-host-1',
-        connectedHostId: 'remote-host-1',
-        connectionStatus: 'connected',
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(offlineStore as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should have attempted offline fallback
-      expect(offlineStore.setOfflineMode).toHaveBeenCalledWith(true);
-      expect(mockQueryOfflineJournal).toHaveBeenCalled();
-    });
-
-    it('reports original error if offline fallback also fails', async () => {
-      mockQueryRemoteJournal.mockRejectedValue(new Error('Connection refused'));
-      mockQueryOfflineJournal.mockRejectedValue(new Error('No offline data'));
-      const filterStore = createMockFilterStore();
-      const offlineStore = createMockOfflineStore();
-
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore({
-        activeTabId: 'remote-host-1',
-        connectedHostId: 'remote-host-1',
-        connectionStatus: 'connected',
-      }) as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(offlineStore as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      // Should report the original error
-      expect(filterStore.setError).toHaveBeenCalledWith('Connection refused');
-    });
+    expect(mockQueryRemoteJournal).toHaveBeenCalledWith(
+      'host-b',
+      expect.objectContaining({
+        since: new Date(anchorTimestamp / 1000 - SCROLL_SYNC_OFFSET_MS).toISOString(),
+      }),
+    );
   });
 
-  describe('refresh', () => {
-    it('refresh fetches from beginning (not append)', async () => {
-      const filterStore = createMockFilterStore({ cursorEnd: 'cursor-1' });
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { result } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      mockQueryJournal.mockClear();
-      filterStore.setEntries.mockClear();
-
-      // Call refresh
-      await act(async () => {
-        result.current.refresh();
-        await vi.runAllTimersAsync();
-      });
-
-      // Should have set entries (not appended)
-      expect(filterStore.setEntries).toHaveBeenCalled();
-      // Should not include afterCursor
-      expect(mockQueryJournal).toHaveBeenCalledWith(
-        expect.not.objectContaining({ afterCursor: expect.anything() })
-      );
+  it('does not defer a tab-sync override past a later filter edit while disabled', async () => {
+    const anchorTimestamp = 1_700_000_000_123_000;
+    useConnectionStore.setState({
+      activeTabId: 'host-a',
+      connectedHostId: 'host-a',
+      connectionStatus: 'connected',
     });
+    useScrollSyncStore.setState({ syncEnabled: true, anchorTimestamp });
+    const { rerender } = renderHook(({ enabled }) => useJournalLogs(enabled), {
+      initialProps: { enabled: true },
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    mockQueryRemoteJournal.mockClear();
+
+    rerender({ enabled: false });
+    useConnectionStore.setState({
+      activeTabId: 'host-b',
+      connectedHostId: 'host-b',
+      connectionStatus: 'connected',
+    });
+    rerender({ enabled: false });
+    await act(async () => {
+      useFilterStore.getState().setFilter({ grepPattern: 'edited after tab switch' });
+      await Promise.resolve();
+    });
+
+    rerender({ enabled: true });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const [, requestedFilter] = mockQueryRemoteJournal.mock.lastCall!;
+    expect(requestedFilter).toMatchObject({ grepPattern: 'edited after tab switch' });
+    expect(requestedFilter.since).toBeUndefined();
   });
 
-  describe('return values', () => {
-    it('returns entries, isLoading, error, hasMore, loadMore, and refresh', async () => {
-      const entries = [createEntry('1')];
-      const filterStore = createMockFilterStore({
-        entries,
-        isLoading: true,
-        error: 'some error',
-        hasMore: true,
-      });
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { result } = renderHook(() => useJournalLogs());
-
-      expect(result.current.entries).toBe(entries);
-      expect(result.current.isLoading).toBe(true);
-      expect(result.current.error).toBe('some error');
-      expect(result.current.hasMore).toBe(true);
-      expect(typeof result.current.loadMore).toBe('function');
-      expect(typeof result.current.refresh).toBe('function');
+  it('preserves a follow startup error while historical loading resumes', async () => {
+    useFollowModeStore.setState({
+      desiredSession: { hostId: LOCAL_TAB_ID, sessionId: 'starting' },
+      startupError: null,
     });
+    renderHook(() => useJournalLogs());
+    expect(mockQueryJournal).not.toHaveBeenCalled();
+
+    await act(async () => {
+      useFollowModeStore.setState({
+        desiredSession: null,
+        startupError: 'Failed to start follow mode: keyring unavailable',
+      });
+      await Promise.resolve();
+    });
+
+    expect(mockQueryJournal).toHaveBeenCalled();
+    expect(useFilterStore.getState().error).toBe('Failed to start follow mode: keyring unavailable');
+    expect(useFollowModeStore.getState().startupError).toBeNull();
   });
 
-  describe('component unmount', () => {
-    it('cleans up debounce timer on unmount', async () => {
-      let filter = createFilter();
-      const filterStore = createMockFilterStore({ filter });
-
-      mockUseFilterStore.mockImplementation(() => ({
-        ...filterStore,
-        filter,
-      }) as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      const { rerender, unmount } = renderHook(() => useJournalLogs());
-
-      // Initial fetch
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      const callCount = mockQueryJournal.mock.calls.length;
-
-      // Change filter to start debounce
-      filter = createFilter({ since: '2 hours ago' });
-      rerender();
-
-      // Unmount before debounce completes
-      unmount();
-
-      // Advance time past debounce
-      await act(async () => {
-        vi.advanceTimersByTime(DEBOUNCE_MS * 2);
-      });
-
-      // Should not have made additional calls after unmount
-      expect(mockQueryJournal.mock.calls.length).toBe(callCount);
+  it('switches current remote failures to persisted offline mode, then reloads cached page one', async () => {
+    useConnectionStore.setState({
+      activeTabId: 'host-a',
+      connectedHostId: 'host-a',
+      connectionStatus: 'connected',
     });
+    mockQueryRemoteJournal.mockRejectedValueOnce(new Error('SSH connection failed'));
+    renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useOfflineStore.getState().isOfflineMode).toBe(true);
+    expect(mockQueryOfflineJournal).toHaveBeenCalledWith('host-a', testFilter());
   });
 
-  describe('cursor tracking', () => {
-    it('updates cursorEnd after successful fetch', async () => {
-      mockQueryJournal.mockResolvedValue({
-        entries: [createEntry('1'), createEntry('2')],
-        hasMore: true,
-        cursorEnd: 'cursor-end-123',
-      });
-
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(filterStore.setCursorEnd).toHaveBeenCalledWith('cursor-end-123');
+  it('debounces subsequent filter changes and cancels them on source replacement', async () => {
+    const { rerender } = renderHook(() => useJournalLogs());
+    await act(async () => {
+      await Promise.resolve();
     });
+    mockQueryJournal.mockClear();
 
-    it('updates hasMore after fetch', async () => {
-      mockQueryJournal.mockResolvedValue({
-        entries: [createEntry('1')],
-        hasMore: false,
-        cursorEnd: 'end',
-      });
-
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(filterStore.setHasMore).toHaveBeenCalledWith(false);
+    useFilterStore.getState().setFilter({ grepPattern: 'later' });
+    rerender();
+    await act(async () => {
+      vi.advanceTimersByTime(DEBOUNCE_MS - 1);
     });
-  });
+    expect(mockQueryJournal).not.toHaveBeenCalled();
 
-  describe('empty results', () => {
-    it('handles empty result set', async () => {
-      mockQueryJournal.mockResolvedValue({
-        entries: [],
-        hasMore: false,
-        cursorEnd: undefined,
-      });
-
-      const filterStore = createMockFilterStore();
-      mockUseFilterStore.mockReturnValue(filterStore as ReturnType<typeof useFilterStore>);
-      mockUseConnectionStore.mockReturnValue(createMockConnectionStore() as ReturnType<typeof useConnectionStore>);
-      mockUseOfflineStore.mockReturnValue(createMockOfflineStore() as ReturnType<typeof useOfflineStore>);
-      mockUseScrollSyncStore.mockReturnValue(createMockScrollSyncStore() as ReturnType<typeof useScrollSyncStore>);
-
-      renderHook(() => useJournalLogs());
-
-      await act(async () => {
-        await vi.runAllTimersAsync();
-      });
-
-      expect(filterStore.setEntries).toHaveBeenCalledWith([]);
-      expect(filterStore.setHasMore).toHaveBeenCalledWith(false);
-      expect(filterStore.setCursorEnd).toHaveBeenCalledWith(null);
+    useConnectionStore.setState({ activeTabId: 'another-local' });
+    rerender();
+    await act(async () => {
+      vi.advanceTimersByTime(DEBOUNCE_MS);
+      await Promise.resolve();
     });
+    expect(mockQueryJournal).not.toHaveBeenCalled();
+    expect(mockQueryOfflineJournal).toHaveBeenCalled();
   });
 });

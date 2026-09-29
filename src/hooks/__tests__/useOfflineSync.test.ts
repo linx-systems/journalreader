@@ -139,41 +139,6 @@ describe('useOfflineSync', () => {
       expect(result.current.isOffline).toBe(true);
     });
 
-    it('is true when disconnected', () => {
-      useConnectionStore.setState({
-        connectedHostId: null,
-        connectionStatus: 'disconnected',
-      });
-      useOfflineStore.setState({ isOfflineMode: false });
-
-      const { result } = renderHook(() => useOfflineSync());
-
-      expect(result.current.isOffline).toBe(true);
-    });
-
-    it('is true when connection status is error', () => {
-      useConnectionStore.setState({
-        connectedHostId: 'host-123',
-        connectionStatus: 'error',
-      });
-      useOfflineStore.setState({ isOfflineMode: false });
-
-      const { result } = renderHook(() => useOfflineSync());
-
-      expect(result.current.isOffline).toBe(true);
-    });
-
-    it('is true when connection status is connecting', () => {
-      useConnectionStore.setState({
-        connectedHostId: null,
-        connectionStatus: 'connecting',
-      });
-      useOfflineStore.setState({ isOfflineMode: false });
-
-      const { result } = renderHook(() => useOfflineSync());
-
-      expect(result.current.isOffline).toBe(true);
-    });
   });
 
   describe('isSyncing', () => {
@@ -211,7 +176,7 @@ describe('useOfflineSync', () => {
       expect(result.current.currentProgress).toEqual(currentSync);
     });
 
-    it('is false when currentSync is for different host', () => {
+    it('is true when currentSync is for a different host', () => {
       const currentSync: SyncProgressEvent = {
         hostId: 'other-host',
         status: 'fetching',
@@ -229,7 +194,8 @@ describe('useOfflineSync', () => {
 
       const { result } = renderHook(() => useOfflineSync());
 
-      expect(result.current.isSyncing).toBe(false);
+      expect(result.current.isSyncing).toBe(true);
+      expect(result.current.currentProgress).toEqual(currentSync);
     });
   });
 
@@ -458,6 +424,34 @@ describe('useOfflineSync', () => {
       });
 
       expect(mockCancelSync).toHaveBeenCalledWith('host-123');
+    });
+
+    it('cancels the active sync after switching hosts', async () => {
+      const mockCancelSync = vi.fn().mockResolvedValue(undefined);
+
+      useConnectionStore.setState({
+        connectedHostId: 'host-123',
+        connectionStatus: 'connected',
+      });
+      useOfflineStore.setState({
+        currentSync: {
+          hostId: 'other-host',
+          status: 'fetching',
+          entriesSynced: 50,
+          totalEntries: 100,
+          batchSize: 50,
+          error: null,
+        },
+        cancelSync: mockCancelSync,
+      });
+
+      const { result } = renderHook(() => useOfflineSync());
+
+      await act(async () => {
+        await result.current.stopSync();
+      });
+
+      expect(mockCancelSync).toHaveBeenCalledWith('other-host');
     });
   });
 

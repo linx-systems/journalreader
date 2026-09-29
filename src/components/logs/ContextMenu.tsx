@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Copy, FileJson, Filter, MinusCircle, Search, AlertTriangle } from 'lucide-react';
 import type { JournalEntry } from '../../lib/types';
 import { PRIORITY_LABELS } from '../../lib/types';
+import { isModalOpen } from '../ui/ModalDialog';
 
 export interface ContextMenuItem {
   label: string;
@@ -46,6 +47,7 @@ export function ContextMenu({
     };
 
     const handleEscape = (event: KeyboardEvent) => {
+      if (isModalOpen()) return;
       if (event.key === 'Escape') {
         onClose();
       }

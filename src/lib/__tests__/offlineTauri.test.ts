@@ -10,8 +10,6 @@ import {
   deleteOfflineLogs,
   getOfflineSettings,
   updateOfflineSettings,
-  isOfflineMode,
-  setOfflineMode,
   triggerSync,
   triggerSyncAll,
   cancelSync,
@@ -375,50 +373,6 @@ describe('updateOfflineSettings', () => {
   });
 });
 
-// ============================================================================
-// Offline Mode Commands
-// ============================================================================
-
-describe('isOfflineMode', () => {
-  it('calls invoke without arguments', async () => {
-    invokeMock.mockResolvedValueOnce(true);
-
-    const response = await isOfflineMode();
-
-    expect(invokeMock).toHaveBeenCalledWith('is_offline_mode');
-    expect(response).toBe(true);
-  });
-
-  it('returns false when not in offline mode', async () => {
-    invokeMock.mockResolvedValueOnce(false);
-
-    const response = await isOfflineMode();
-
-    expect(response).toBe(false);
-  });
-});
-
-describe('setOfflineMode', () => {
-  it('calls invoke with offline true', async () => {
-    invokeMock.mockResolvedValueOnce(undefined);
-
-    await setOfflineMode(true);
-
-    expect(invokeMock).toHaveBeenCalledWith('set_offline_mode', {
-      offline: true,
-    });
-  });
-
-  it('calls invoke with offline false', async () => {
-    invokeMock.mockResolvedValueOnce(undefined);
-
-    await setOfflineMode(false);
-
-    expect(invokeMock).toHaveBeenCalledWith('set_offline_mode', {
-      offline: false,
-    });
-  });
-});
 
 // ============================================================================
 // Sync Commands

@@ -6,6 +6,7 @@ pub mod offline_db;
 pub mod offline_storage;
 pub mod offline_types;
 pub(crate) mod parser;
+pub(crate) mod pagination;
 pub mod reader;
 pub mod remote_follower;
 pub mod remote_reader;

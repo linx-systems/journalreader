@@ -3,11 +3,11 @@ use crate::journal::{
     BootInfo, JournalFilter, JournalFollower, JournalQueryResult, JournalReader, JournalStatistics,
     StatisticsRequest, SystemUnit,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 
 /// Global state for the journal follower
-pub struct FollowerState(pub Mutex<JournalFollower>);
+pub struct FollowerState(pub Arc<Mutex<JournalFollower>>);
 
 #[tauri::command]
 pub async fn query_journal(filter: JournalFilter) -> Result<JournalQueryResult, JournalError> {
@@ -38,26 +38,38 @@ pub async fn get_log_count(filter: JournalFilter) -> Result<u64, JournalError> {
 }
 
 #[tauri::command]
-pub fn start_follow(
+pub async fn start_follow(
     filter: JournalFilter,
+    session_id: String,
     state: State<'_, FollowerState>,
     app_handle: AppHandle,
 ) -> Result<(), JournalError> {
-    let mut follower = state
-        .0
-        .lock()
-        .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-    follower.start(&filter, app_handle)
+    let follower = state.0.clone();
+    tokio::task::spawn_blocking(move || {
+        follower
+            .lock()
+            .map_err(|error| JournalError::ExecutionError(error.to_string()))?
+            .start(&filter, session_id, app_handle)
+    })
+    .await
+    .map_err(|error| JournalError::ExecutionError(error.to_string()))?
 }
 
 #[tauri::command]
-pub fn stop_follow(state: State<'_, FollowerState>) -> Result<(), JournalError> {
-    let mut follower = state
-        .0
-        .lock()
-        .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-    follower.stop();
-    Ok(())
+pub async fn stop_follow(
+    session_id: String,
+    state: State<'_, FollowerState>,
+) -> Result<(), JournalError> {
+    let follower = state.0.clone();
+    tokio::task::spawn_blocking(move || {
+        follower
+            .lock()
+            .map_err(|error| JournalError::ExecutionError(error.to_string()))?
+            .stop(&session_id);
+        Ok(())
+    })
+    .await
+    .map_err(|error| JournalError::ExecutionError(error.to_string()))?
 }
 
 #[tauri::command]

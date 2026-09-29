@@ -6,6 +6,7 @@ import { PRIORITY_KEYS, LIGHT_THEME, DARK_THEME } from '../../lib/theme';
 import { PRIORITY_DISPLAY_LABELS } from '../../lib/types';
 import { ThemePreview } from './ThemePreview';
 import clsx from 'clsx';
+import { ModalDialog } from '../ui/ModalDialog';
 
 interface ThemeEditorProps {
   theme: Theme;
@@ -89,13 +90,17 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <ModalDialog
+      isOpen
+      onRequestClose={onClose}
+      labelledBy="theme-editor-title"
+    >
       <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-theme">
           <div className="flex items-center gap-3">
             <Palette className="h-5 w-5 accent-theme" />
-            <h2 className="text-lg font-semibold text-theme">
+            <h2 id="theme-editor-title" className="text-lg font-semibold text-theme">
               {isExisting ? 'Edit Theme' : 'Create Theme'}
             </h2>
           </div>
@@ -351,7 +356,7 @@ export function ThemeEditor({ theme, onClose, onSave }: ThemeEditorProps) {
           </button>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   );
 }
 

@@ -6,6 +6,7 @@ import { ThemeEditor } from './ThemeEditor';
 import { ThemePreview } from './ThemePreview';
 import { OfflineSettingsPanel } from './OfflineSettingsPanel';
 import clsx from 'clsx';
+import { ModalDialog } from '../ui/ModalDialog';
 
 type SettingsTab = 'theme' | 'offline';
 
@@ -120,12 +121,16 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <ModalDialog
+      isOpen={isOpen}
+      onRequestClose={onClose}
+      labelledBy="settings-dialog-title"
+    >
       <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-theme">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-theme">Settings</h2>
+            <h2 id="settings-dialog-title" className="text-lg font-semibold text-theme">Settings</h2>
           </div>
           <button
             onClick={onClose}
@@ -295,7 +300,7 @@ export function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           </div>
         )}
       </div>
-    </div>
+    </ModalDialog>
   );
 }
 

@@ -185,8 +185,8 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
     });
   })();
 
-  const isSyncing = (hostId: string) =>
-    currentSync?.hostId === hostId && currentSync?.status !== 'completed' && currentSync?.status !== 'error';
+  const isSyncing =
+    currentSync?.status === 'starting' || currentSync?.status === 'fetching';
 
   return (
     <div className={clsx('space-y-6', className)}>
@@ -323,7 +323,8 @@ export function OfflineSettingsPanel({ className }: OfflineSettingsPanelProps) {
                 hostName={name}
                 stats={stats}
                 syncState={syncState}
-                isSyncing={isSyncing(id)}
+                isSyncing={isSyncing}
+                isActiveSyncHost={isSyncing && currentSync?.hostId === id}
                 isDeleteConfirm={deleteConfirmHost === id}
                 isExportMenuOpen={exportMenuHost === id}
                 onSync={() => handleSync(id)}
@@ -349,6 +350,7 @@ interface HostStorageCardProps {
   stats: StorageStats;
   syncState?: SyncState;
   isSyncing: boolean;
+  isActiveSyncHost: boolean;
   isDeleteConfirm: boolean;
   isExportMenuOpen: boolean;
   onSync: () => void;
@@ -366,6 +368,7 @@ function HostStorageCard({
   stats,
   syncState,
   isSyncing,
+  isActiveSyncHost,
   isDeleteConfirm,
   isExportMenuOpen,
   onSync,
@@ -409,9 +412,15 @@ function HostStorageCard({
                 ? 'text-theme-secondary cursor-not-allowed'
                 : 'text-theme-secondary hover:text-theme hover:bg-theme'
             )}
-            title={isSyncing ? 'Syncing...' : 'Sync now'}
+            title={
+              isActiveSyncHost
+                ? 'Syncing...'
+                : isSyncing
+                ? 'A sync is already running.'
+                : 'Sync now'
+            }
           >
-            <RefreshCw className={clsx('h-4 w-4', isSyncing && 'animate-spin')} />
+            <RefreshCw className={clsx('h-4 w-4', isActiveSyncHost && 'animate-spin')} />
           </button>
 
           {/* Export dropdown */}

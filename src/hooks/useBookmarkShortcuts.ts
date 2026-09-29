@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useBookmarkStore } from '../stores/bookmarkStore';
 import { useFilterStore } from '../stores/filterStore';
 import { DEFAULT_FILTER } from '../lib/types';
+import { isModalOpen } from '../components/ui/ModalDialog';
 
 /**
  * Hook that enables keyboard shortcuts for quick-loading bookmarks.
@@ -13,6 +14,7 @@ export function useBookmarkShortcuts() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isModalOpen()) return;
       // Don't trigger if user is typing in an input field
       if (
         e.target instanceof HTMLInputElement ||

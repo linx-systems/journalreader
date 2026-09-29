@@ -4,17 +4,18 @@
 //! allowing the UI to query cached journal entries, manage sync state, and
 //! control offline settings.
 
-use crate::commands::remote::OfflineDatabaseState;
+use crate::commands::sync::SyncCancelState;
 use crate::error::JournalError;
+use crate::journal::offline_db::OfflineDatabase;
 use crate::journal::{
     JournalEntry, JournalFilter, JournalQueryResult, OfflineSettings, RetentionPolicy,
     RetentionResult, StorageStats, SyncState, SyncStatus,
 };
+use crate::OfflineDatabaseState;
 use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
 
 // ============================================================================
@@ -33,9 +34,6 @@ pub enum ExportFormat {
     Csv,
 }
 
-/// Global offline mode flag.
-/// When true, the app should use offline storage instead of remote connections.
-static OFFLINE_MODE: AtomicBool = AtomicBool::new(false);
 
 // ============================================================================
 // Offline Journal Query Commands
@@ -55,18 +53,7 @@ pub fn query_offline_journal(
         .lock()
         .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
 
-    let entries = db.query_entries(&host_id, &filter)?;
-
-    let has_more = entries.len() as u32 >= filter.limit && filter.limit > 0;
-    let cursor_start = entries.first().map(|e| e.cursor.clone());
-    let cursor_end = entries.last().map(|e| e.cursor.clone());
-
-    Ok(JournalQueryResult {
-        entries,
-        has_more,
-        cursor_start,
-        cursor_end,
-    })
+    db.query_page(&host_id, &filter)
 }
 
 /// Get the count of offline journal entries matching the filter criteria.
@@ -170,7 +157,11 @@ pub fn get_all_storage_stats(
 pub fn delete_offline_logs(
     host_id: String,
     state: State<'_, OfflineDatabaseState>,
+    cancel_state: State<'_, SyncCancelState>,
 ) -> Result<u64, JournalError> {
+    // Keep the invalidation reservation until the reset is committed so a new
+    // sync cannot start for this host between cancellation and deletion.
+    let _deletion_guard = cancel_state.invalidate_host(&host_id)?;
     let db = state
         .0
         .lock()
@@ -257,108 +248,135 @@ pub fn get_retention_policy(
 ///
 /// Returns the number of entries exported.
 #[tauri::command]
-pub fn export_offline_logs(
+pub async fn export_offline_logs(
     host_id: String,
     filter: JournalFilter,
     format: ExportFormat,
     path: String,
     state: State<'_, OfflineDatabaseState>,
 ) -> Result<u64, JournalError> {
-    let db = state
-        .0
-        .lock()
-        .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
-
-    // Query all entries without limit for export
-    let mut export_filter = filter.clone();
-    export_filter.limit = 0; // Use default/max for export
-    export_filter.reverse = false; // Export in chronological order
-
-    let entries = db.query_entries(&host_id, &export_filter)?;
-
-    if entries.is_empty() {
-        return Ok(0);
+    // Ensure the writable connection has finished initialization before opening
+    // an independent read-only connection for the export snapshot.
+    {
+        let _db = state
+            .0
+            .lock()
+            .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {}", e)))?;
     }
 
-    // Write to file based on format
-    match format {
-        ExportFormat::Json => write_json(&path, &entries)?,
-        ExportFormat::Text => write_text(&path, &entries)?,
-        ExportFormat::Csv => write_csv(&path, &entries)?,
-    }
+    let database_path = OfflineDatabase::path()?;
 
-    Ok(entries.len() as u64)
+
+    tokio::task::spawn_blocking(move || {
+        let db = OfflineDatabase::open_read_only(&database_path)?;
+        match format {
+            ExportFormat::Json => write_json(&db, &host_id, &filter, &path),
+            ExportFormat::Text => write_text(&db, &host_id, &filter, &path),
+            ExportFormat::Csv => write_csv(&db, &host_id, &filter, &path),
+        }
+    })
+    .await
+    .map_err(|e| JournalError::ExecutionError(format!("Export task failed: {}", e)))?
 }
 
-/// Write entries as JSON array to file.
-fn write_json(path: &str, entries: &[JournalEntry]) -> Result<(), JournalError> {
-    let file = File::create(path)
-        .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
-    let writer = BufWriter::new(file);
-
-    serde_json::to_writer_pretty(writer, entries)
-        .map_err(|e| JournalError::ExecutionError(format!("Failed to write JSON: {}", e)))?;
-
-    Ok(())
-}
-
-/// Write entries as human-readable text to file.
-fn write_text(path: &str, entries: &[JournalEntry]) -> Result<(), JournalError> {
+/// Stream a JSON array from a read-only database snapshot.
+fn write_json(
+    db: &OfflineDatabase,
+    host_id: &str,
+    filter: &JournalFilter,
+    path: &str,
+) -> Result<u64, JournalError> {
     let file = File::create(path)
         .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
     let mut writer = BufWriter::new(file);
+    writer
+        .write_all(b"[\n")
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to write JSON: {}", e)))?;
 
-    for entry in entries {
-        let timestamp = format_timestamp(entry.realtime_timestamp);
-        let priority_label = priority_to_label(entry.priority);
-        let unit = entry.systemd_unit.as_deref().unwrap_or("-");
+    let mut first = true;
+    let count = db.visit_entries(host_id, filter, |entry| {
+        if !first {
+            writer
+                .write_all(b",\n")
+                .map_err(|e| JournalError::ExecutionError(format!("Failed to write JSON: {}", e)))?;
+        }
+        serde_json::to_writer(&mut writer, entry)
+            .map_err(|e| JournalError::ExecutionError(format!("Failed to write JSON: {}", e)))?;
+        first = false;
+        Ok(())
+    })?;
 
-        writeln!(
-            writer,
-            "[{}] [{}] [{}]: {}",
-            timestamp, priority_label, unit, entry.message
-        )
-        .map_err(|e| JournalError::ExecutionError(format!("Failed to write text: {}", e)))?;
-    }
+    writer
+        .write_all(b"\n]\n")
+        .and_then(|()| writer.flush())
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to flush JSON: {}", e)))?;
+    Ok(count)
+}
+
+/// Stream human-readable entries from a read-only database snapshot.
+fn write_text(
+    db: &OfflineDatabase,
+    host_id: &str,
+    filter: &JournalFilter,
+    path: &str,
+) -> Result<u64, JournalError> {
+    let file = File::create(path)
+        .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
+    let mut writer = BufWriter::new(file);
+    let count = db.visit_entries(host_id, filter, |entry| write_text_entry(&mut writer, entry))?;
 
     writer
         .flush()
         .map_err(|e| JournalError::ExecutionError(format!("Failed to flush file: {}", e)))?;
-
-    Ok(())
+    Ok(count)
 }
 
-/// Write entries as CSV to file.
-fn write_csv(path: &str, entries: &[JournalEntry]) -> Result<(), JournalError> {
+fn write_text_entry(writer: &mut BufWriter<File>, entry: &JournalEntry) -> Result<(), JournalError> {
+    let timestamp = format_timestamp(entry.realtime_timestamp);
+    let priority_label = priority_to_label(entry.priority);
+    let unit = entry.systemd_unit.as_deref().unwrap_or("-");
+
+    writeln!(
+        writer,
+        "[{}] [{}] [{}]: {}",
+        timestamp, priority_label, unit, entry.message
+    )
+    .map_err(|e| JournalError::ExecutionError(format!("Failed to write text: {}", e)))
+}
+
+/// Stream CSV rows from a read-only database snapshot.
+fn write_csv(
+    db: &OfflineDatabase,
+    host_id: &str,
+    filter: &JournalFilter,
+    path: &str,
+) -> Result<u64, JournalError> {
     let file = File::create(path)
         .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
     let mut writer = BufWriter::new(file);
-
-    // Write header row
     writeln!(writer, "timestamp,priority,unit,identifier,pid,message")
         .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV header: {}", e)))?;
 
-    for entry in entries {
-        let timestamp = format_timestamp_iso(entry.realtime_timestamp);
-        let unit = entry.systemd_unit.as_deref().unwrap_or("");
-        let identifier = entry.syslog_identifier.as_deref().unwrap_or("");
-        let pid = entry.pid.map(|p| p.to_string()).unwrap_or_default();
-        // Escape message for CSV (double quotes and wrap in quotes)
-        let message = escape_csv(&entry.message);
-
-        writeln!(
-            writer,
-            "{},{},{},{},{},{}",
-            timestamp, entry.priority, unit, identifier, pid, message
-        )
-        .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV row: {}", e)))?;
-    }
-
+    let count = db.visit_entries(host_id, filter, |entry| write_csv_entry(&mut writer, entry))?;
     writer
         .flush()
         .map_err(|e| JournalError::ExecutionError(format!("Failed to flush file: {}", e)))?;
+    Ok(count)
+}
 
-    Ok(())
+fn write_csv_entry(writer: &mut BufWriter<File>, entry: &JournalEntry) -> Result<(), JournalError> {
+    let timestamp = format_timestamp_iso(entry.realtime_timestamp);
+    let unit = entry.systemd_unit.as_deref().unwrap_or("");
+    let identifier = entry.syslog_identifier.as_deref().unwrap_or("");
+    let pid = entry.pid.map(|pid| pid.to_string()).unwrap_or_default();
+    let message = escape_csv(&entry.message);
+
+    writeln!(
+        writer,
+        "{},{},{},{},{},{}",
+        timestamp, entry.priority, unit, identifier, pid, message
+    )
+    .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV row: {}", e)))
 }
 
 /// Format timestamp as human-readable string for text export.
@@ -442,46 +460,70 @@ pub fn update_offline_settings(
     db.update_offline_settings(&settings)
 }
 
-// ============================================================================
-// Offline Mode Commands
-// ============================================================================
-
-/// Check if the app is currently in offline mode.
-///
-/// When in offline mode, the app uses cached data instead of remote connections.
-#[tauri::command]
-pub fn is_offline_mode() -> bool {
-    OFFLINE_MODE.load(Ordering::SeqCst)
-}
-
-/// Set the offline mode state.
-///
-/// When set to true, the app will use cached data instead of remote connections.
-#[tauri::command]
-pub fn set_offline_mode(offline: bool) {
-    OFFLINE_MODE.store(offline, Ordering::SeqCst);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
+    use std::fs;
+    use tempfile::tempdir;
 
-    #[test]
-    fn test_offline_mode_default() {
-        // Reset to default for test
-        OFFLINE_MODE.store(false, Ordering::SeqCst);
-        assert!(!is_offline_mode());
+    fn sample_entry(index: usize) -> JournalEntry {
+        JournalEntry {
+            cursor: format!("cursor-{index}"),
+            realtime_timestamp: index as i64,
+            monotonic_timestamp: None,
+            boot_id: "boot".to_string(),
+            message: format!("message-{index}"),
+            priority: 6,
+            syslog_identifier: None,
+            systemd_unit: None,
+            pid: None,
+            uid: None,
+            gid: None,
+            exe: None,
+            cmdline: None,
+            hostname: None,
+            comm: None,
+        }
     }
 
     #[test]
-    fn test_offline_mode_toggle() {
-        OFFLINE_MODE.store(false, Ordering::SeqCst);
-        assert!(!is_offline_mode());
+    fn export_writers_stream_every_matching_entry() {
+        let directory = tempdir().unwrap();
+        let database_path = directory.path().join("offline.db");
+        let db = OfflineDatabase::from_connection(Connection::open(database_path).unwrap());
+        db.run_migrations().unwrap();
+        let entries = (0..501).map(sample_entry).collect::<Vec<_>>();
+        assert_eq!(db.insert_entries("host", &entries).unwrap(), 501);
 
-        set_offline_mode(true);
-        assert!(is_offline_mode());
+        let filter = JournalFilter {
+            limit: 1,
+            reverse: true,
+            after_cursor: Some("cursor-500".to_string()),
+            ..Default::default()
+        };
+        let json_path = directory.path().join("logs.json");
+        assert_eq!(
+            write_json(&db, "host", &filter, json_path.to_str().unwrap()).unwrap(),
+            501
+        );
+        let json: Vec<JournalEntry> =
+            serde_json::from_slice(&fs::read(&json_path).unwrap()).unwrap();
+        assert_eq!(json.len(), 501);
+        assert_eq!(json.first().unwrap().cursor, "cursor-0");
 
-        set_offline_mode(false);
-        assert!(!is_offline_mode());
+        let text_path = directory.path().join("logs.txt");
+        assert_eq!(
+            write_text(&db, "host", &filter, text_path.to_str().unwrap()).unwrap(),
+            501
+        );
+        assert_eq!(fs::read_to_string(&text_path).unwrap().lines().count(), 501);
+
+        let csv_path = directory.path().join("logs.csv");
+        assert_eq!(
+            write_csv(&db, "host", &filter, csv_path.to_str().unwrap()).unwrap(),
+            501
+        );
+        assert_eq!(fs::read_to_string(&csv_path).unwrap().lines().count(), 502);
     }
 }

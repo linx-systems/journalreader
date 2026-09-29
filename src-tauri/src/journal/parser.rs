@@ -84,6 +84,19 @@ pub fn get_priority(value: &Value) -> u8 {
         .unwrap_or(6) // Default to info
 }
 
+/// Apply filters that journalctl cannot represent exactly.
+///
+/// Unitless records are retained unless a positive unit filter excluded them upstream.
+pub fn matches_post_filters(
+    excluded_units: &[String],
+    priorities: &[u8],
+    unit: Option<&str>,
+    priority: u8,
+) -> bool {
+    !unit.is_some_and(|unit| excluded_units.iter().any(|excluded| excluded == unit))
+        && (priorities.is_empty() || priorities.contains(&priority))
+}
+
 /// Extract an optional u32 value from a JSON object.
 /// Handles both string and integer representations.
 pub fn get_u32(value: &Value, key: &str) -> Option<u32> {
@@ -251,5 +264,24 @@ mod tests {
         let json_line = r#"{"__CURSOR":"s=abc123","__REALTIME_TIMESTAMP":"1704067200000000","_BOOT_ID":"boot-1","MESSAGE":[72,101,108,108,111]}"#;
         let entry = parse_entry(json_line).unwrap();
         assert_eq!(entry.message, "Hello");
+    }
+
+    #[test]
+    fn matches_post_filters_preserves_unitless_records_and_exact_priorities() {
+        let excluded = vec!["skip.service".to_string()];
+        assert!(matches_post_filters(&excluded, &[3, 6], None, 3));
+        assert!(!matches_post_filters(
+            &excluded,
+            &[3, 6],
+            Some("skip.service"),
+            3,
+        ));
+        assert!(!matches_post_filters(
+            &excluded,
+            &[3, 6],
+            Some("keep.service"),
+            4,
+        ));
+        assert!(matches_post_filters(&excluded, &[], Some("keep.service"), 4));
     }
 }

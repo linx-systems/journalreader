@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ShieldAlert, ShieldCheck, Loader2, AlertTriangle, X } from 'lucide-react';
 import { fetchHostKey, acceptHostKey, removeHostKey } from '../../lib/tauri';
 import type { RemoteHost, HostKeyInfo } from '../../lib/types';
+import { ModalDialog } from '../ui/ModalDialog';
 
 interface HostKeyVerificationDialogProps {
   host: RemoteHost;
@@ -58,7 +59,11 @@ export function HostKeyVerificationDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <ModalDialog
+      isOpen
+      onRequestClose={onReject}
+      labelledBy="host-key-verification-title"
+    >
       <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-lg">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-theme">
@@ -68,7 +73,7 @@ export function HostKeyVerificationDialog({
             ) : (
               <ShieldCheck className="h-6 w-6 text-amber-500" />
             )}
-            <h2 className="text-lg font-semibold text-theme">
+            <h2 id="host-key-verification-title" className="text-lg font-semibold text-theme">
               {isKeyChanged ? 'Host Key Changed!' : 'Verify Host Key'}
             </h2>
           </div>
@@ -166,6 +171,6 @@ export function HostKeyVerificationDialog({
           </button>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

@@ -5,11 +5,11 @@ import { DEFAULT_FILTER } from '../lib/types';
 interface FilterState {
   filter: JournalFilter;
   entries: JournalEntry[];
+  resultGeneration: number;
   isLoading: boolean;
   error: string | null;
   hasMore: boolean;
   cursorEnd: string | null;
-
   // Follow mode state
   isFollowing: boolean;
   isFollowPaused: boolean;
@@ -31,6 +31,7 @@ interface FilterState {
 export const useFilterStore = create<FilterState>((set) => ({
   filter: { ...DEFAULT_FILTER, since: '15 minutes ago' },
   entries: [],
+  resultGeneration: 0,
   isLoading: false,
   error: null,
   hasMore: false,
@@ -74,12 +75,24 @@ export const useFilterStore = create<FilterState>((set) => ({
       error: null,
     }),
 
-  setEntries: (entries) => set({ entries }),
+  setEntries: (entries) => set((state) => ({
+    entries,
+    resultGeneration: state.resultGeneration + 1,
+  })),
 
   appendEntries: (newEntries) =>
-    set((state) => ({
-      entries: [...state.entries, ...newEntries],
-    })),
+    set((state) => {
+      const cursors = new Set(state.entries.map((entry) => entry.cursor));
+      const accepted = newEntries.filter((entry) => {
+        if (cursors.has(entry.cursor)) return false;
+        cursors.add(entry.cursor);
+        return true;
+      });
+
+      return accepted.length > 0
+        ? { entries: [...state.entries, ...accepted] }
+        : state;
+    }),
 
   // Add new entries for follow mode - respects sort order
   // For newest-first (reverse: true): prepend entries (new at top)
@@ -87,39 +100,28 @@ export const useFilterStore = create<FilterState>((set) => ({
   // Deduplicate by cursor and filter by current priority settings
   prependEntries: (newEntries) =>
     set((state) => {
-      // Create a Set of existing cursors for O(1) lookup
-      const existingCursors = new Set(state.entries.map(e => e.cursor));
-
-      // Get valid priorities from current filter (if set)
+      const acceptedCursors = new Set(state.entries.map((entry) => entry.cursor));
       const validPriorities = state.filter.priorities?.length
         ? new Set(state.filter.priorities)
         : null;
-
-      // Filter out entries that already exist OR don't match priority filter
-      const uniqueNewEntries = newEntries.filter(e => {
-        // Skip if already exists
-        if (existingCursors.has(e.cursor)) return false;
-        // Skip if doesn't match priority filter (when filter is active)
-        if (validPriorities && !validPriorities.has(e.priority)) return false;
+      const accepted = newEntries.filter((entry) => {
+        if (acceptedCursors.has(entry.cursor)) return false;
+        if (validPriorities && !validPriorities.has(entry.priority)) return false;
+        acceptedCursors.add(entry.cursor);
         return true;
       });
 
-      if (uniqueNewEntries.length === 0) return state;
+      if (accepted.length === 0) return state;
 
-      // Check sort order: reverse=true means newest-first, reverse=false means oldest-first
-      const isNewestFirst = state.filter.reverse !== false; // default to true if undefined
-
-      if (isNewestFirst) {
-        // Newest-first: prepend new entries (they appear at the top)
+      if (state.filter.reverse !== false) {
         return {
-          entries: [...uniqueNewEntries, ...state.entries],
-        };
-      } else {
-        // Oldest-first: append new entries (they appear at the bottom)
-        return {
-          entries: [...state.entries, ...uniqueNewEntries],
+          entries: [...accepted.reverse(), ...state.entries],
         };
       }
+
+      return {
+        entries: [...state.entries, ...accepted],
+      };
     }),
 
   setLoading: (isLoading) => set({ isLoading }),

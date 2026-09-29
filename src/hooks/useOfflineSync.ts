@@ -70,7 +70,7 @@ function cleanupListeners() {
  * from the Tauri backend and provides sync state for the current host.
  */
 export function useOfflineSync() {
-  const { connectedHostId, connectionStatus } = useConnectionStore();
+  const { connectedHostId } = useConnectionStore();
   const {
     isOfflineMode,
     syncStates,
@@ -97,11 +97,12 @@ export function useOfflineSync() {
   // Get sync state for the current host
   const syncState = syncStates.get(effectiveHostId);
 
-  // Determine if we're effectively offline
-  const isOffline = isOfflineMode || connectionStatus !== 'connected';
-
-  // Check if currently syncing (either globally or for current host)
-  const isSyncing = currentSync !== null && currentSync.hostId === effectiveHostId;
+  // The persisted store is the sole authority for offline mode.
+  const isOffline = isOfflineMode;
+  // The native reservation is process-wide, so every start control must
+  // reflect the active run regardless of the selected host.
+  const isSyncing =
+    currentSync?.status === 'starting' || currentSync?.status === 'fetching';
 
   // Get last sync timestamp for current host
   const lastSyncTime = syncState?.lastSyncTimestamp ?? null;
@@ -114,27 +115,26 @@ export function useOfflineSync() {
     return triggerSync(effectiveHostId);
   }, [effectiveHostId, triggerSync]);
 
-  // Cancel sync for current host
+  // A host switch must not hide the active run's cancellation action.
   const stopSync = useCallback(async () => {
-    await cancelSync(effectiveHostId);
-  }, [effectiveHostId, cancelSync]);
+    await cancelSync(currentSync?.hostId ?? effectiveHostId);
+  }, [cancelSync, currentSync?.hostId, effectiveHostId]);
 
   return {
     /** Sync state for the current host */
     syncState,
-    /** Whether the app is in offline mode (explicit or disconnected) */
+    /** Whether the app is in explicit offline mode */
     isOffline,
-    /** Whether a sync is currently in progress for the current host */
     isSyncing,
     /** Last successful sync timestamp for the current host (null if never synced) */
     lastSyncTime,
     /** Current sync progress event (null if not syncing) */
     currentProgress: currentSync,
-    /** Current host ID being tracked */
+    /** Host ID being tracked */
     hostId: effectiveHostId,
     /** Start syncing for the current host */
     startSync,
-    /** Cancel ongoing sync for the current host */
+    /** Cancel the process-wide active sync, if any */
     stopSync,
   };
 }

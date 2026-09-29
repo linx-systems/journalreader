@@ -223,8 +223,15 @@ impl SshConnection {
                 return Err(JournalError::JournalNotAvailable);
             }
 
-            // Non-zero exit with some output is still valid for journalctl in some cases
-            if !output.is_empty() && stderr.is_empty() {
+            // journalctl returns status 1 (without stderr) when --grep finds no
+            // records. Its empty stdout is a valid exhausted result for paging,
+            // counting, and statistics rather than an SSH command failure.
+            let empty_grep_result = exit_status == 1
+                && command.starts_with("journalctl")
+                && command.contains(" -g ")
+                && output.is_empty()
+                && stderr.is_empty();
+            if (!output.is_empty() && stderr.is_empty()) || empty_grep_result {
                 return Ok(output);
             }
 

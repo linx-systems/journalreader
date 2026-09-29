@@ -185,11 +185,20 @@ export const QUICK_FILTERS: QuickFilter[] = [
 
 // Follow mode event payloads
 export interface FollowEvent {
+  hostId: string;
+  sessionId: string;
   entries: JournalEntry[];
 }
 
 export interface FollowErrorEvent {
+  hostId: string;
+  sessionId: string;
   message: string;
+}
+
+export interface FollowStoppedEvent {
+  hostId: string;
+  sessionId: string;
 }
 
 // Statistics types

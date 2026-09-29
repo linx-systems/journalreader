@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
+import { ModalDialog } from '../ui/ModalDialog';
 
 interface SaveFilterDialogProps {
   isOpen: boolean;
@@ -20,14 +21,11 @@ export function SaveFilterDialog({
 }: SaveFilterDialogProps) {
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
       setName(initialName);
       setDescription(initialDescription);
-      // Focus input after dialog opens
-      setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [isOpen, initialName, initialDescription]);
 
@@ -42,24 +40,16 @@ export function SaveFilterDialog({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      onClose();
-    }
-  };
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onClose}
-      onKeyDown={handleKeyDown}
+    <ModalDialog
+      isOpen={isOpen}
+      onRequestClose={onClose}
+      labelledBy="save-filter-dialog-title"
+      closeOnBackdrop
     >
-      <div
-        className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-md mx-4"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-md mx-4">
         <div className="flex items-center justify-between p-4 border-b border-theme">
-          <h3 className="font-semibold text-theme">{title}</h3>
+          <h3 id="save-filter-dialog-title" className="font-semibold text-theme">{title}</h3>
           <button
             onClick={onClose}
             className="p-1 text-theme-secondary hover:text-theme
@@ -78,7 +68,6 @@ export function SaveFilterDialog({
               Name *
             </label>
             <input
-              ref={inputRef}
               id="bookmark-name"
               type="text"
               value={name}
@@ -131,6 +120,6 @@ export function SaveFilterDialog({
           </div>
         </form>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

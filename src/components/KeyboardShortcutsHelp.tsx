@@ -1,4 +1,5 @@
 import { X, Keyboard } from 'lucide-react';
+import { ModalDialog } from './ui/ModalDialog';
 
 interface KeyboardShortcutsHelpProps {
   isOpen: boolean;
@@ -45,19 +46,18 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelp
   if (!isOpen) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onClose}
+    <ModalDialog
+      isOpen={isOpen}
+      onRequestClose={onClose}
+      labelledBy="keyboard-shortcuts-title"
+      closeOnBackdrop
     >
-      <div
-        className="bg-theme border border-theme rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="bg-theme border border-theme rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-theme">
           <div className="flex items-center gap-2">
             <Keyboard className="h-5 w-5 accent-theme" />
-            <h2 className="text-lg font-semibold text-theme">Keyboard Shortcuts</h2>
+            <h2 id="keyboard-shortcuts-title" className="text-lg font-semibold text-theme">Keyboard Shortcuts</h2>
           </div>
           <button
             onClick={onClose}
@@ -114,6 +114,6 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: KeyboardShortcutsHelp
           </p>
         </div>
       </div>
-    </div>
+    </ModalDialog>
   );
 }

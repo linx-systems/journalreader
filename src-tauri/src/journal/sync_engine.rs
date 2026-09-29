@@ -4,11 +4,11 @@
 //! of remote hosts and stores them in the local SQLite database for offline access.
 
 use crate::error::JournalError;
-use crate::journal::offline_db::OfflineDatabase;
+use crate::journal::offline_db::{OfflineDatabase, SharedOfflineDatabase};
 use crate::journal::offline_types::SyncStatus;
 use crate::journal::remote_reader::RemoteJournalReader;
-use crate::journal::ssh::ConnectionManager;
-use crate::journal::types::JournalFilter;
+use crate::journal::ssh::SharedConnectionManager;
+use crate::journal::types::{BootInfo, JournalFilter, JournalQueryResult};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -19,6 +19,41 @@ use tauri_plugin_notification::NotificationExt;
 
 /// Batch size for fetching entries within each boot
 const SYNC_BATCH_SIZE: u32 = 1000;
+
+/// Host-scoped source for synchronization.
+///
+/// Each operation is intentionally independent so the source lock is released
+/// before the engine acquires the offline database lock.
+pub trait SyncSource {
+    fn list_boots(&self, host_id: &str) -> Result<Vec<BootInfo>, JournalError>;
+    fn query(&self, host_id: &str, filter: &JournalFilter) -> Result<JournalQueryResult, JournalError>;
+}
+
+fn source_changed_error() -> JournalError {
+    JournalError::ExecutionError("Sync source changed; reconnect the requested host.".to_string())
+}
+
+impl SyncSource for SharedConnectionManager {
+    fn list_boots(&self, host_id: &str) -> Result<Vec<BootInfo>, JournalError> {
+        let manager = self
+            .lock()
+            .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire connection lock: {e}")))?;
+        if manager.current_host().map(|host| host.id.as_str()) != Some(host_id) {
+            return Err(source_changed_error());
+        }
+        RemoteJournalReader::list_boots(&manager)
+    }
+
+    fn query(&self, host_id: &str, filter: &JournalFilter) -> Result<JournalQueryResult, JournalError> {
+        let manager = self
+            .lock()
+            .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire connection lock: {e}")))?;
+        if manager.current_host().map(|host| host.id.as_str()) != Some(host_id) {
+            return Err(source_changed_error());
+        }
+        RemoteJournalReader::query(&manager, filter)
+    }
+}
 
 /// Event payload for sync progress updates
 #[derive(Clone, Serialize, Deserialize)]
@@ -94,261 +129,82 @@ impl SyncEngine {
             .show();
     }
 
-    /// Sync journal entries from a remote host.
-    ///
-    /// This method implements boot-based sync by:
-    /// 1. Getting the list of available boots from the remote host
-    /// 2. Selecting the last N boots based on settings
-    /// 3. Fetching all entries from each boot in batches
-    /// 4. Inserting entries into SQLite
-    /// 5. Applying retention policy to clean up old boots
-    ///
-    /// # Arguments
-    /// * `host_id` - The ID of the host to sync
-    /// * `host_name` - Display name of the host (for notifications)
-    /// * `conn` - The SSH connection manager
-    /// * `db` - The offline database
-    /// * `cancel_flag` - Atomic flag to cancel the sync
-    /// * `app_handle` - Optional Tauri app handle for emitting events
-    ///
-    /// # Returns
-    /// A `SyncResult` indicating the outcome of the sync operation
-    pub fn sync_host(
-        host_id: &str,
-        host_name: &str,
-        conn: &ConnectionManager,
+    fn lock_database(
+        shared_db: &SharedOfflineDatabase,
+    ) -> Result<std::sync::MutexGuard<'_, OfflineDatabase>, JournalError> {
+        shared_db
+            .lock()
+            .map_err(|e| JournalError::ExecutionError(format!("Failed to acquire database lock: {e}")))
+    }
+
+    /// Persist a terminal state after the caller has acquired the database
+    /// guard. Cancellation is checked here because it can arrive while the
+    /// worker waits for that guard.
+    fn persist_terminal_state_after_lock(
         db: &OfflineDatabase,
-        cancel_flag: Arc<AtomicBool>,
-        app_handle: Option<&AppHandle>,
-    ) -> SyncResult {
-        // Check for cancellation before starting
+        cancel_flag: &AtomicBool,
+        sync_state: &mut crate::journal::offline_types::SyncState,
+        final_status: SyncProgressStatus,
+    ) -> Result<SyncProgressStatus, JournalError> {
         if cancel_flag.load(Ordering::SeqCst) {
-            return SyncResult {
-                host_id: host_id.to_string(),
-                success: false,
-                entries_synced: 0,
-                total_entries: 0,
-                error: None,
-                cancelled: true,
-            };
+            let mut current_state = db.get_sync_state(&sync_state.host_id)?;
+            current_state.sync_status = SyncStatus::Never;
+            current_state.sync_error = None;
+            db.update_sync_state(&current_state)?;
+            *sync_state = current_state;
+            return Ok(SyncProgressStatus::Cancelled);
         }
-
-        // Get offline settings to determine how many boots to sync
-        let settings = match db.get_offline_settings() {
-            Ok(s) => s,
-            Err(e) => {
-                return SyncResult {
-                    host_id: host_id.to_string(),
-                    success: false,
-                    entries_synced: 0,
-                    total_entries: 0,
-                    error: Some(format!("Failed to get offline settings: {}", e)),
-                    cancelled: false,
-                };
-            }
-        };
-
-        let boots_to_sync = settings.sync_boots;
-
-        // Get initial sync state
-        let mut sync_state = match db.get_sync_state(host_id) {
-            Ok(state) => state,
-            Err(e) => {
-                return SyncResult {
-                    host_id: host_id.to_string(),
-                    success: false,
-                    entries_synced: 0,
-                    total_entries: 0,
-                    error: Some(format!("Failed to get sync state: {}", e)),
-                    cancelled: false,
-                };
-            }
-        };
-
-        // Emit starting event
-        if let Some(handle) = app_handle {
-            let _ = handle.emit(
-                "sync-progress",
-                SyncProgressEvent {
-                    host_id: host_id.to_string(),
-                    status: SyncProgressStatus::Starting,
-                    entries_synced: 0,
-                    total_entries: sync_state.entries_synced,
-                    batch_size: 0,
-                    error: None,
-                },
-            );
-        }
-
-        // Update sync state to in-progress
-        sync_state.sync_status = SyncStatus::InProgress;
-        sync_state.sync_error = None;
-        if let Err(e) = db.update_sync_state(&sync_state) {
-            return SyncResult {
-                host_id: host_id.to_string(),
-                success: false,
-                entries_synced: 0,
-                total_entries: sync_state.entries_synced,
-                error: Some(format!("Failed to update sync state: {}", e)),
-                cancelled: false,
-            };
-        }
-
-        // Get list of available boots from remote
-        let boots = match RemoteJournalReader::list_boots(conn) {
-            Ok(b) => b,
-            Err(e) => {
-                sync_state.sync_status = SyncStatus::Failed;
-                sync_state.sync_error = Some(format!("Failed to list boots: {}", e));
-                let _ = db.update_sync_state(&sync_state);
-                return SyncResult {
-                    host_id: host_id.to_string(),
-                    success: false,
-                    entries_synced: 0,
-                    total_entries: sync_state.entries_synced,
-                    error: Some(format!("Failed to list boots: {}", e)),
-                    cancelled: false,
-                };
-            }
-        };
-
-        // Select the last N boots (boots are already sorted by offset, 0 is current)
-        // Take boots with offset >= -(boots_to_sync - 1)
-        let boots_to_fetch: Vec<_> = boots
-            .iter()
-            .filter(|b| b.boot_offset >= -(boots_to_sync as i32 - 1))
-            .collect();
-
-        let mut entries_synced: i64 = 0;
-        let mut sync_error: Option<String> = None;
-        let mut was_cancelled = false;
-
-        // Sync each boot
-        for boot in &boots_to_fetch {
-            // Check for cancellation
-            if cancel_flag.load(Ordering::SeqCst) {
-                was_cancelled = true;
-                break;
-            }
-
-            let mut last_cursor: Option<String> = None;
-
-            // Fetch all entries for this boot in batches
-            loop {
-                // Check for cancellation
-                if cancel_flag.load(Ordering::SeqCst) {
-                    was_cancelled = true;
-                    break;
-                }
-
-                // Build filter for this batch
-                let filter = JournalFilter {
-                    boot_id: Some(boot.boot_id.clone()),
-                    after_cursor: last_cursor.clone(),
-                    limit: SYNC_BATCH_SIZE,
-                    reverse: false, // Oldest first for proper ordering
-                    ..Default::default()
-                };
-
-                // Fetch batch from remote
-                let result = match RemoteJournalReader::query(conn, &filter) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        sync_error = Some(format!("Failed to fetch entries for boot {}: {}", boot.boot_id, e));
-                        break;
-                    }
-                };
-
-                // No more entries for this boot
-                if result.entries.is_empty() {
-                    break;
-                }
-
-                let batch_size = result.entries.len();
-
-                // Insert entries into database
-                match db.insert_entries(host_id, &result.entries) {
-                    Ok(inserted) => {
-                        entries_synced += inserted as i64;
-                    }
-                    Err(e) => {
-                        sync_error = Some(format!("Failed to insert entries: {}", e));
-                        break;
-                    }
-                }
-
-                // Update cursor for next batch
-                last_cursor = result.cursor_end.clone();
-
-                // Update sync state
-                sync_state.last_cursor = last_cursor.clone();
-                sync_state.last_sync_timestamp = now_millis();
-                sync_state.entries_synced += batch_size as i64;
-
-                if let Err(e) = db.update_sync_state(&sync_state) {
-                    sync_error = Some(format!("Failed to update sync state: {}", e));
-                    break;
-                }
-
-                // Emit progress event
-                if let Some(handle) = app_handle {
-                    let _ = handle.emit(
-                        "sync-progress",
-                        SyncProgressEvent {
-                            host_id: host_id.to_string(),
-                            status: SyncProgressStatus::Fetching,
-                            entries_synced,
-                            total_entries: sync_state.entries_synced,
-                            batch_size,
-                            error: None,
-                        },
-                    );
-                }
-
-                // No more entries available for this boot
-                if !result.has_more {
-                    break;
-                }
-            }
-
-            // Break outer loop if we hit an error or cancellation
-            if sync_error.is_some() || was_cancelled {
-                break;
-            }
-        }
-
-        // Finalize sync state
-        let final_status = if was_cancelled {
-            SyncProgressStatus::Cancelled
-        } else if sync_error.is_some() {
-            SyncProgressStatus::Error
-        } else {
-            SyncProgressStatus::Completed
-        };
 
         sync_state.sync_status = match final_status {
             SyncProgressStatus::Completed => SyncStatus::Completed,
-            SyncProgressStatus::Cancelled => SyncStatus::InProgress, // Keep as in-progress for resume
             SyncProgressStatus::Error => SyncStatus::Failed,
             _ => SyncStatus::Failed,
         };
-        sync_state.sync_error = sync_error.clone();
         sync_state.last_sync_timestamp = now_millis();
+        db.update_sync_state(sync_state)?;
+        Ok(final_status)
+    }
 
-        // Best-effort update of final state
-        let _ = db.update_sync_state(&sync_state);
+    fn finalize_sync(
+        host_id: &str,
+        host_name: &str,
+        shared_db: &SharedOfflineDatabase,
+        cancel_flag: &AtomicBool,
+        app_handle: Option<&AppHandle>,
+        sync_state: &mut crate::journal::offline_types::SyncState,
+        entries_synced: i64,
+        mut final_status: SyncProgressStatus,
+        mut sync_error: Option<String>,
+    ) -> SyncResult {
+        sync_state.sync_error = sync_error.clone();
+        if let Ok(db) = Self::lock_database(shared_db) {
+            if let Ok(status) = Self::persist_terminal_state_after_lock(
+                &db,
+                cancel_flag,
+                sync_state,
+                final_status.clone(),
+            ) {
+                final_status = status;
+            }
+        }
+        let was_cancelled = final_status == SyncProgressStatus::Cancelled;
+        if was_cancelled {
+            sync_error = None;
+            sync_state.sync_status = SyncStatus::Never;
+            sync_state.sync_error = None;
+        }
 
-        // Apply retention policy after successful sync
-        let mut retention_deleted: u64 = 0;
+        let mut retention_deleted = 0;
         if final_status == SyncProgressStatus::Completed {
-            if let Ok(policy) = db.get_retention_policy() {
-                if let Ok(deleted) = db.apply_retention(host_id, &policy) {
-                    retention_deleted = deleted;
+            if let Ok(db) = Self::lock_database(shared_db) {
+                if let Ok(policy) = db.get_retention_policy() {
+                    if let Ok(deleted) = db.apply_retention(host_id, &policy) {
+                        retention_deleted = deleted;
+                    }
                 }
             }
         }
 
-        // Emit final progress event
         if let Some(handle) = app_handle {
             let _ = handle.emit(
                 "sync-progress",
@@ -361,27 +217,22 @@ impl SyncEngine {
                     error: sync_error.clone(),
                 },
             );
-
-            // Send desktop notification for completed or failed syncs
             match final_status {
                 SyncProgressStatus::Completed => {
                     let message = if retention_deleted > 0 {
                         format!(
-                            "{} entries synced from {} ({} old entries cleaned up)",
-                            entries_synced, host_name, retention_deleted
+                            "{entries_synced} entries synced from {host_name} ({retention_deleted} old entries cleaned up)"
                         )
                     } else {
-                        format!("{} entries synced from {}", entries_synced, host_name)
+                        format!("{entries_synced} entries synced from {host_name}")
                     };
                     Self::send_notification(handle, "Sync Complete", &message);
                 }
-                SyncProgressStatus::Error => {
-                    let error_msg = sync_error
-                        .as_ref()
-                        .map(|e| e.as_str())
-                        .unwrap_or("Unknown error");
-                    Self::send_notification(handle, "Sync Failed", error_msg);
-                }
+                SyncProgressStatus::Error => Self::send_notification(
+                    handle,
+                    "Sync Failed",
+                    sync_error.as_deref().unwrap_or("Unknown error"),
+                ),
                 _ => {}
             }
         }
@@ -396,10 +247,230 @@ impl SyncEngine {
         }
     }
 
-    /// Check if a sync can be resumed for a host.
-    ///
-    /// Returns true if there's a stored cursor position that can be resumed from.
-    pub fn can_resume(host_id: &str, db: &OfflineDatabase) -> Result<bool, JournalError> {
+    /// Synchronize a host without holding a source or database mutex across
+    /// the other resource's work.
+    pub fn sync_host(
+        host_id: &str,
+        host_name: &str,
+        source: &impl SyncSource,
+        shared_db: &SharedOfflineDatabase,
+        cancel_flag: Arc<AtomicBool>,
+        app_handle: Option<&AppHandle>,
+    ) -> SyncResult {
+        let result = |error: Option<String>, cancelled: bool, entries_synced: i64, total_entries: i64| SyncResult {
+            host_id: host_id.to_string(),
+            success: error.is_none() && !cancelled,
+            entries_synced,
+            total_entries,
+            error,
+            cancelled,
+        };
+
+        if cancel_flag.load(Ordering::SeqCst) {
+            return result(None, true, 0, 0);
+        }
+
+        let settings = match Self::lock_database(shared_db).and_then(|db| db.get_offline_settings()) {
+            Ok(settings) => settings,
+            Err(error) => return result(Some(format!("Failed to get offline settings: {error}")), false, 0, 0),
+        };
+        let mut sync_state = match Self::lock_database(shared_db).and_then(|db| db.get_sync_state(host_id)) {
+            Ok(state) => state,
+            Err(error) => return result(Some(format!("Failed to get sync state: {error}")), false, 0, 0),
+        };
+
+        if let Some(handle) = app_handle {
+            let _ = handle.emit(
+                "sync-progress",
+                SyncProgressEvent {
+                    host_id: host_id.to_string(),
+                    status: SyncProgressStatus::Starting,
+                    entries_synced: 0,
+                    total_entries: sync_state.entries_synced,
+                    batch_size: 0,
+                    error: None,
+                },
+            );
+        }
+
+        sync_state.sync_status = SyncStatus::InProgress;
+        sync_state.sync_error = None;
+        let sync_started = match Self::lock_database(shared_db).and_then(|db| {
+            if cancel_flag.load(Ordering::SeqCst) {
+                return Ok(false);
+            }
+            db.update_sync_state(&sync_state)?;
+            Ok(true)
+        }) {
+            Ok(sync_started) => sync_started,
+            Err(error) => {
+                return result(
+                    Some(format!("Failed to update sync state: {error}")),
+                    false,
+                    0,
+                    sync_state.entries_synced,
+                )
+            }
+        };
+        if !sync_started {
+            return result(None, true, 0, sync_state.entries_synced);
+        }
+
+        let boots = match source.list_boots(host_id) {
+            Ok(boots) => boots,
+            Err(error) => {
+                let final_status = if cancel_flag.load(Ordering::SeqCst) {
+                    SyncProgressStatus::Cancelled
+                } else {
+                    SyncProgressStatus::Error
+                };
+                return Self::finalize_sync(
+                    host_id,
+                    host_name,
+                    shared_db,
+                    &cancel_flag,
+                    app_handle,
+                    &mut sync_state,
+                    0,
+                    final_status,
+                    Some(format!("Failed to list boots: {error}")),
+                );
+            }
+        };
+        if cancel_flag.load(Ordering::SeqCst) {
+            return Self::finalize_sync(
+                host_id,
+                host_name,
+                shared_db,
+                &cancel_flag,
+                app_handle,
+                &mut sync_state,
+                0,
+                SyncProgressStatus::Cancelled,
+                None,
+            );
+        }
+        let boots_to_fetch: Vec<_> = boots
+            .iter()
+            .filter(|boot| boot.boot_offset >= -(settings.sync_boots as i32 - 1))
+            .collect();
+        let mut entries_synced = 0_i64;
+        let mut sync_error = None;
+        let mut was_cancelled = false;
+
+        for boot in boots_to_fetch {
+            if cancel_flag.load(Ordering::SeqCst) {
+                was_cancelled = true;
+                break;
+            }
+
+            let mut last_cursor = None;
+            loop {
+                if cancel_flag.load(Ordering::SeqCst) {
+                    was_cancelled = true;
+                    break;
+                }
+
+                let filter = JournalFilter {
+                    boot_id: Some(boot.boot_id.clone()),
+                    after_cursor: last_cursor.clone(),
+                    limit: SYNC_BATCH_SIZE,
+                    reverse: false,
+                    ..Default::default()
+                };
+                let page = match source.query(host_id, &filter) {
+                    Ok(page) => page,
+                    Err(error) => {
+                        sync_error = Some(format!(
+                            "Failed to fetch entries for boot {}: {error}",
+                            boot.boot_id
+                        ));
+                        break;
+                    }
+                };
+                if page.entries.is_empty() {
+                    break;
+                }
+                // The network query may have blocked; cancellation wins before
+                // the database transaction begins.
+                if cancel_flag.load(Ordering::SeqCst) {
+                    was_cancelled = true;
+                    break;
+                }
+
+                let batch_size = page.entries.len();
+                match Self::lock_database(shared_db).and_then(|db| {
+                    // This must be checked after obtaining the guard: a
+                    // cancellation or cache deletion may have happened while
+                    // waiting for another database operation.
+                    if cancel_flag.load(Ordering::SeqCst) {
+                        return Ok(None);
+                    }
+                    db.insert_sync_batch(host_id, &page.entries, &mut sync_state)
+                        .map(Some)
+                }) {
+                    Ok(Some(inserted)) => entries_synced += inserted as i64,
+                    Ok(None) => {
+                        was_cancelled = true;
+                        break;
+                    }
+                    Err(error) => {
+                        sync_error = Some(format!("Failed to insert entries: {error}"));
+                        break;
+                    }
+                }
+                last_cursor = page.cursor_end;
+
+                if let Some(handle) = app_handle {
+                    let _ = handle.emit(
+                        "sync-progress",
+                        SyncProgressEvent {
+                            host_id: host_id.to_string(),
+                            status: SyncProgressStatus::Fetching,
+                            entries_synced,
+                            total_entries: sync_state.entries_synced,
+                            batch_size,
+                            error: None,
+                        },
+                    );
+                }
+                if !page.has_more {
+                    break;
+                }
+            }
+            if sync_error.is_some() || was_cancelled {
+                break;
+            }
+        }
+
+        if cancel_flag.load(Ordering::SeqCst) {
+            was_cancelled = true;
+        }
+        let final_status = if was_cancelled {
+            SyncProgressStatus::Cancelled
+        } else if sync_error.is_some() {
+            SyncProgressStatus::Error
+        } else {
+            SyncProgressStatus::Completed
+        };
+        Self::finalize_sync(
+            host_id,
+            host_name,
+            shared_db,
+            &cancel_flag,
+            app_handle,
+            &mut sync_state,
+            entries_synced,
+            final_status,
+            sync_error,
+        )
+    }
+
+    /// Check whether a stored checkpoint can be resumed.
+    pub fn can_resume(
+        host_id: &str,
+        db: &crate::journal::offline_db::OfflineDatabase,
+    ) -> Result<bool, JournalError> {
         let state = db.get_sync_state(host_id)?;
         Ok(state.last_cursor.is_some()
             && (state.sync_status == SyncStatus::InProgress
@@ -451,6 +522,162 @@ mod tests {
             cmdline: Some("/usr/bin/test arg1".to_string()),
             hostname: Some("localhost".to_string()),
             comm: Some("test".to_string()),
+        }
+    }
+
+    struct BlockingSource {
+        started: std::sync::mpsc::Sender<()>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl SyncSource for BlockingSource {
+        fn list_boots(&self, _host_id: &str) -> Result<Vec<BootInfo>, JournalError> {
+            self.started
+                .send(())
+                .map_err(|error| JournalError::ExecutionError(error.to_string()))?;
+            let release = self
+                .release
+                .lock()
+                .map_err(|error| JournalError::ExecutionError(error.to_string()))?;
+            release
+                .recv()
+                .map_err(|error| JournalError::ExecutionError(error.to_string()))?;
+            Ok(Vec::new())
+        }
+
+        fn query(
+            &self,
+            _host_id: &str,
+            _filter: &JournalFilter,
+        ) -> Result<JournalQueryResult, JournalError> {
+            unreachable!("no boots means no query")
+        }
+    }
+
+    struct CancellingListBootsSource {
+        cancel: Arc<AtomicBool>,
+        error: bool,
+    }
+
+    impl SyncSource for CancellingListBootsSource {
+        fn list_boots(&self, _host_id: &str) -> Result<Vec<BootInfo>, JournalError> {
+            self.cancel.store(true, Ordering::SeqCst);
+            if self.error {
+                Err(JournalError::ExecutionError("list boots failed".to_string()))
+            } else {
+                Ok(Vec::new())
+            }
+        }
+
+        fn query(
+            &self,
+            _host_id: &str,
+            _filter: &JournalFilter,
+        ) -> Result<JournalQueryResult, JournalError> {
+            unreachable!("cancellation after listing boots must finish before querying")
+        }
+    }
+
+    struct HostChangingSource {
+        queries: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SyncSource for HostChangingSource {
+        fn list_boots(&self, _host_id: &str) -> Result<Vec<BootInfo>, JournalError> {
+            Ok(vec![BootInfo {
+                boot_id: "boot-123".to_string(),
+                boot_offset: 0,
+                first_entry: None,
+                last_entry: None,
+            }])
+        }
+
+        fn query(
+            &self,
+            _host_id: &str,
+            _filter: &JournalFilter,
+        ) -> Result<JournalQueryResult, JournalError> {
+            if self.queries.fetch_add(1, Ordering::SeqCst) == 0 {
+                Ok(JournalQueryResult {
+                    entries: vec![sample_entry("cur1", "first", 1)],
+                    has_more: true,
+                    cursor_start: Some("cur1".to_string()),
+                    cursor_end: Some("cur1".to_string()),
+                })
+            } else {
+                Err(source_changed_error())
+            }
+        }
+    }
+
+    struct CancellingSecondPageSource {
+        queries: std::sync::atomic::AtomicUsize,
+        cancel: Arc<AtomicBool>,
+    }
+
+    impl SyncSource for CancellingSecondPageSource {
+        fn list_boots(&self, _host_id: &str) -> Result<Vec<BootInfo>, JournalError> {
+            Ok(vec![BootInfo {
+                boot_id: "boot-123".to_string(),
+                boot_offset: 0,
+                first_entry: None,
+                last_entry: None,
+            }])
+        }
+
+        fn query(
+            &self,
+            _host_id: &str,
+            _filter: &JournalFilter,
+        ) -> Result<JournalQueryResult, JournalError> {
+            let second_page = self.queries.fetch_add(1, Ordering::SeqCst) != 0;
+            if second_page {
+                self.cancel.store(true, Ordering::SeqCst);
+            }
+            let cursor = if second_page { "cur2" } else { "cur1" };
+            Ok(JournalQueryResult {
+                entries: vec![sample_entry(cursor, "entry", if second_page { 2 } else { 1 })],
+                has_more: !second_page,
+                cursor_start: Some(cursor.to_string()),
+                cursor_end: Some(cursor.to_string()),
+            })
+        }
+    }
+
+    struct WaitingOnePageSource {
+        queried: std::sync::mpsc::Sender<()>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl SyncSource for WaitingOnePageSource {
+        fn list_boots(&self, _host_id: &str) -> Result<Vec<BootInfo>, JournalError> {
+            Ok(vec![BootInfo {
+                boot_id: "boot-123".to_string(),
+                boot_offset: 0,
+                first_entry: None,
+                last_entry: None,
+            }])
+        }
+
+        fn query(
+            &self,
+            _host_id: &str,
+            _filter: &JournalFilter,
+        ) -> Result<JournalQueryResult, JournalError> {
+            self.queried
+                .send(())
+                .map_err(|error| JournalError::ExecutionError(error.to_string()))?;
+            self.release
+                .lock()
+                .map_err(|error| JournalError::ExecutionError(error.to_string()))?
+                .recv()
+                .map_err(|error| JournalError::ExecutionError(error.to_string()))?;
+            Ok(JournalQueryResult {
+                entries: vec![sample_entry("stale", "stale", 2)],
+                has_more: false,
+                cursor_start: Some("stale".to_string()),
+                cursor_end: Some("stale".to_string()),
+            })
         }
     }
 
@@ -566,29 +793,271 @@ mod tests {
     #[test]
     fn test_sync_without_connection() {
         let (db, _temp_dir) = create_test_db();
-        let conn = create_test_connection_manager();
+        let source = Arc::new(std::sync::Mutex::new(create_test_connection_manager()));
+        let db = Arc::new(std::sync::Mutex::new(db));
         let cancel_flag = Arc::new(AtomicBool::new(false));
 
-        // Sync without a connection should fail
-        let result = SyncEngine::sync_host("host-1", "Test Host", &conn, &db, cancel_flag, None);
+        let result =
+            SyncEngine::sync_host("host-1", "Test Host", &source, &db, cancel_flag, None);
 
         assert!(!result.success);
-        assert!(result.error.is_some());
-        assert!(result.error.unwrap().contains("Not connected"));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Sync source changed; reconnect the requested host."))
+        );
+    }
+
+    #[test]
+    fn cancellation_after_successful_boot_listing_persists_terminal_state() {
+        let (db, _temp_dir) = create_test_db();
+        let db = Arc::new(std::sync::Mutex::new(db));
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let source = CancellingListBootsSource {
+            cancel: cancel_flag.clone(),
+            error: false,
+        };
+
+        let result =
+            SyncEngine::sync_host("host-1", "Test Host", &source, &db, cancel_flag, None);
+
+        assert!(result.cancelled);
+        assert!(!result.success);
+        assert!(result.error.is_none());
+        let state = db.lock().unwrap().get_sync_state("host-1").unwrap();
+        assert_eq!(state.sync_status, SyncStatus::Never);
+        assert!(state.sync_error.is_none());
+    }
+
+    #[test]
+    fn cancellation_after_failed_boot_listing_persists_terminal_state() {
+        let (db, _temp_dir) = create_test_db();
+        let db = Arc::new(std::sync::Mutex::new(db));
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let source = CancellingListBootsSource {
+            cancel: cancel_flag.clone(),
+            error: true,
+        };
+
+        let result =
+            SyncEngine::sync_host("host-1", "Test Host", &source, &db, cancel_flag, None);
+
+        assert!(result.cancelled);
+        assert!(!result.success);
+        assert!(result.error.is_none());
+        let state = db.lock().unwrap().get_sync_state("host-1").unwrap();
+        assert_eq!(state.sync_status, SyncStatus::Never);
+        assert!(state.sync_error.is_none());
     }
 
     #[test]
     fn test_sync_immediate_cancel() {
         let (db, _temp_dir) = create_test_db();
-        let conn = create_test_connection_manager();
-        let cancel_flag = Arc::new(AtomicBool::new(true)); // Already cancelled
+        let source = Arc::new(std::sync::Mutex::new(create_test_connection_manager()));
+        let db = Arc::new(std::sync::Mutex::new(db));
+        let cancel_flag = Arc::new(AtomicBool::new(true));
 
-        // Sync should stop immediately due to cancellation
-        let result = SyncEngine::sync_host("host-1", "Test Host", &conn, &db, cancel_flag, None);
+        let result =
+            SyncEngine::sync_host("host-1", "Test Host", &source, &db, cancel_flag, None);
 
         assert!(!result.success);
         assert!(result.cancelled);
         assert_eq!(result.entries_synced, 0);
+    }
+
+    #[test]
+    fn blocked_source_does_not_block_cached_reads() {
+        let (db, _temp_dir) = create_test_db();
+        db.insert_entries("host-1", &[sample_entry("cached", "cached", 1)])
+            .unwrap();
+        let db = Arc::new(std::sync::Mutex::new(db));
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let source = BlockingSource {
+            started: started_tx,
+            release: std::sync::Mutex::new(release_rx),
+        };
+
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                SyncEngine::sync_host(
+                    "host-1",
+                    "Host",
+                    &source,
+                    &db,
+                    Arc::new(AtomicBool::new(false)),
+                    None,
+                )
+            });
+            started_rx.recv().unwrap();
+            let (cached_entries, cached_stats) = match db.lock() {
+                Ok(db) => (
+                    db.query_page("host-1", &JournalFilter::default())
+                        .unwrap()
+                        .entries
+                        .len(),
+                    db.get_storage_stats("host-1").unwrap().entry_count,
+                ),
+                Err(error) => panic!("database lock poisoned: {error}"),
+            };
+            assert_eq!(cached_entries, 1);
+            assert_eq!(cached_stats, 1);
+            release_tx.send(()).unwrap();
+            assert!(worker.join().unwrap().success);
+        });
+    }
+
+    #[test]
+    fn source_change_between_batches_does_not_cross_label_entries() {
+        let (db, _temp_dir) = create_test_db();
+        let db = Arc::new(std::sync::Mutex::new(db));
+        let source = HostChangingSource {
+            queries: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let result = SyncEngine::sync_host(
+            "host-a",
+            "Host A",
+            &source,
+            &db,
+            Arc::new(AtomicBool::new(false)),
+            None,
+        );
+
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Sync source changed; reconnect the requested host."))
+        );
+        let (host_a, host_b) = match db.lock() {
+            Ok(db) => (
+                db.get_storage_stats("host-a").unwrap().entry_count,
+                db.get_storage_stats("host-b").unwrap().entry_count,
+            ),
+            Err(error) => panic!("database lock poisoned: {error}"),
+        };
+        assert_eq!(host_a, 1);
+        assert_eq!(host_b, 0);
+    }
+
+    #[test]
+    fn cancellation_after_network_return_keeps_last_checkpoint() {
+        let (db, _temp_dir) = create_test_db();
+        let db = Arc::new(std::sync::Mutex::new(db));
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let source = CancellingSecondPageSource {
+            queries: std::sync::atomic::AtomicUsize::new(0),
+            cancel: cancel_flag.clone(),
+        };
+
+        let result = SyncEngine::sync_host("host-a", "Host A", &source, &db, cancel_flag, None);
+
+        assert!(result.cancelled);
+        assert!(!result.success);
+        let state = match db.lock() {
+            Ok(db) => db.get_sync_state("host-a").unwrap(),
+            Err(error) => panic!("database lock poisoned: {error}"),
+        };
+        assert_eq!(state.sync_status, SyncStatus::Never);
+        assert_eq!(state.last_cursor.as_deref(), Some("cur1"));
+        assert_eq!(state.entries_synced, 1);
+    }
+
+    #[test]
+    fn cancellation_observed_after_final_lock_persists_never_status() {
+        let (db, _temp_dir) = create_test_db();
+        let mut state = SyncState {
+            host_id: "host-a".to_string(),
+            last_cursor: Some("checkpoint".to_string()),
+            sync_status: SyncStatus::InProgress,
+            entries_synced: 1,
+            ..Default::default()
+        };
+        db.update_sync_state(&state).unwrap();
+
+        // The final status was already selected as completed before waiting
+        // for the database guard. The cancellation is observed with that
+        // guard held by persist_terminal_state_after_lock.
+        let cancelled = AtomicBool::new(true);
+        let final_status = SyncEngine::persist_terminal_state_after_lock(
+            &db,
+            &cancelled,
+            &mut state,
+            SyncProgressStatus::Completed,
+        )
+        .unwrap();
+
+        assert!(final_status == SyncProgressStatus::Cancelled);
+        assert_eq!(state.sync_status, SyncStatus::Never);
+        assert!(state.sync_error.is_none());
+        let stored = db.get_sync_state("host-a").unwrap();
+        assert_eq!(stored.sync_status, SyncStatus::Never);
+        assert_eq!(stored.last_cursor.as_deref(), Some("checkpoint"));
+        assert_eq!(stored.entries_synced, 1);
+    }
+
+    #[test]
+    fn cancellation_while_waiting_for_database_lock_does_not_commit_stale_batch() {
+        let (db, _temp_dir) = create_test_db();
+        db.insert_entries("host-a", &[sample_entry("committed", "committed", 1)])
+            .unwrap();
+        db.update_sync_state(&SyncState {
+            host_id: "host-a".to_string(),
+            last_cursor: Some("committed".to_string()),
+            sync_status: SyncStatus::Completed,
+            entries_synced: 1,
+            ..Default::default()
+        })
+        .unwrap();
+
+        let db = Arc::new(std::sync::Mutex::new(db));
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let (queried_tx, queried_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let source = WaitingOnePageSource {
+            queried: queried_tx,
+            release: std::sync::Mutex::new(release_rx),
+        };
+
+        let result = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                SyncEngine::sync_host(
+                    "host-a",
+                    "Host A",
+                    &source,
+                    &db,
+                    cancel_flag.clone(),
+                    None,
+                )
+            });
+            queried_rx.recv().unwrap();
+
+            let database = db.lock().unwrap();
+            release_tx.send(()).unwrap();
+            cancel_flag.store(true, Ordering::SeqCst);
+            database.delete_all_entries("host-a").unwrap();
+            database
+                .update_sync_state(&SyncState {
+                    host_id: "host-a".to_string(),
+                    sync_status: SyncStatus::Never,
+                    ..Default::default()
+                })
+                .unwrap();
+            drop(database);
+
+            worker.join().unwrap()
+        });
+
+        assert!(result.cancelled);
+        let database = db.lock().unwrap();
+        assert_eq!(database.get_storage_stats("host-a").unwrap().entry_count, 0);
+        let state = database.get_sync_state("host-a").unwrap();
+        assert_eq!(state.sync_status, SyncStatus::Never);
+        assert!(state.last_cursor.is_none());
+        assert_eq!(state.entries_synced, 0);
     }
 
     #[test]

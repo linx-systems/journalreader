@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { Virtualizer } from '@tanstack/react-virtual';
 import { KEYBOARD_SEQUENCE_TIMEOUT_MS } from '../lib/constants';
+import { isModalOpen } from '../components/ui/ModalDialog';
 
 export interface KeyboardNavigationOptions {
   /** Total number of items in the list */
@@ -65,6 +66,7 @@ export function useKeyboardNavigation({
   }, []);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (isModalOpen()) return;
     const {
       itemCount,
       selectedIndex,

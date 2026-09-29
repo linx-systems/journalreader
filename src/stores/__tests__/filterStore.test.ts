@@ -23,6 +23,19 @@ it("initializes with defaults", () => {
   expect(state.hasMore).toBe(false);
 });
 
+it("increments result generation only when replacing the first page", () => {
+  const store = useFilterStore.getState();
+  const initialGeneration = store.resultGeneration;
+
+  store.setEntries([entry]);
+  const replacementGeneration = useFilterStore.getState().resultGeneration;
+  store.appendEntries([{ ...entry, cursor: "cursor-2" }]);
+  store.prependEntries([{ ...entry, cursor: "cursor-3" }]);
+
+  expect(replacementGeneration).toBe(initialGeneration + 1);
+  expect(useFilterStore.getState().resultGeneration).toBe(replacementGeneration);
+});
+
 it("setFilter resets pagination when not following", () => {
   const store = useFilterStore.getState();
   store.setEntries([entry]);
@@ -62,6 +75,22 @@ it("appendEntries adds to the end", () => {
   const state = useFilterStore.getState();
   expect(state.entries.map((e) => e.cursor)).toEqual(["cursor-1", "cursor-2"]);
 });
+it("does not duplicate page entries when an append is retried", () => {
+  const store = useFilterStore.getState();
+  store.setEntries([entry]);
+
+  store.appendEntries([
+    { ...entry, cursor: "cursor-2" },
+    { ...entry, cursor: "cursor-2" },
+    entry,
+  ]);
+
+  expect(useFilterStore.getState().entries.map((item) => item.cursor)).toEqual([
+    "cursor-1",
+    "cursor-2",
+  ]);
+});
+
 
 it("prependEntries adds to the beginning", () => {
   const store = useFilterStore.getState();
@@ -71,6 +100,43 @@ it("prependEntries adds to the beginning", () => {
   const state = useFilterStore.getState();
   expect(state.entries.map((e) => e.cursor)).toEqual(["cursor-0", "cursor-1"]);
 });
+it("deduplicates live batches and reverses chronological batches for newest-first", () => {
+  const store = useFilterStore.getState();
+  store.setEntries([{ ...entry, cursor: "existing" }]);
+
+  store.prependEntries([
+    { ...entry, cursor: "first" },
+    { ...entry, cursor: "duplicate" },
+    { ...entry, cursor: "duplicate" },
+    { ...entry, cursor: "last" },
+    { ...entry, cursor: "existing" },
+  ]);
+
+  expect(useFilterStore.getState().entries.map((item) => item.cursor)).toEqual([
+    "last",
+    "duplicate",
+    "first",
+    "existing",
+  ]);
+});
+
+it("keeps chronological live batches at the oldest-first edge", () => {
+  const store = useFilterStore.getState();
+  store.setFilter({ reverse: false });
+  store.setEntries([{ ...entry, cursor: "existing" }]);
+
+  store.prependEntries([
+    { ...entry, cursor: "first" },
+    { ...entry, cursor: "last" },
+  ]);
+
+  expect(useFilterStore.getState().entries.map((item) => item.cursor)).toEqual([
+    "existing",
+    "first",
+    "last",
+  ]);
+});
+
 
 it("resetFilter clears state", () => {
   const store = useFilterStore.getState();

@@ -13,6 +13,7 @@ import { useBookmarkStore, type Bookmark } from '../../stores/bookmarkStore';
 import { useFilterStore } from '../../stores/filterStore';
 import { SaveFilterDialog } from './SaveFilterDialog';
 import { DEFAULT_FILTER } from '../../lib/types';
+import { ModalDialog } from '../ui/ModalDialog';
 
 interface BookmarkItemProps {
   bookmark: Bookmark;
@@ -225,15 +226,14 @@ export function BookmarkList({ onImport, onExport }: BookmarkListProps) {
 
       {/* Delete Confirmation */}
       {showDeleteConfirm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setShowDeleteConfirm(null)}
+        <ModalDialog
+          isOpen
+          onRequestClose={() => setShowDeleteConfirm(null)}
+          labelledBy="delete-bookmark-dialog-title"
+          closeOnBackdrop
         >
-          <div
-            className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-sm mx-4 p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="font-semibold text-theme mb-2">Delete Bookmark?</h3>
+          <div className="bg-theme border border-theme rounded-lg shadow-xl w-full max-w-sm mx-4 p-4">
+            <h3 id="delete-bookmark-dialog-title" className="font-semibold text-theme mb-2">Delete Bookmark?</h3>
             <p className="text-sm text-theme-secondary mb-4">
               Are you sure you want to delete this bookmark? This action cannot be undone.
             </p>
@@ -254,7 +254,7 @@ export function BookmarkList({ onImport, onExport }: BookmarkListProps) {
               </button>
             </div>
           </div>
-        </div>
+        </ModalDialog>
       )}
     </div>
   );

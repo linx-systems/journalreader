@@ -11,8 +11,6 @@ import {
   Link,
   Unlink,
 } from 'lucide-react';
-import { useJournalLogs } from '../../hooks/useJournalLogs';
-import { useFollowMode } from '../../hooks/useFollowMode';
 import { useFilterStore } from '../../stores/filterStore';
 import { useStatisticsStore } from '../../stores/statisticsStore';
 import { useOfflineStore } from '../../stores/offlineStore';
@@ -20,31 +18,35 @@ import { useOfflineSync } from '../../hooks/useOfflineSync';
 import { useConnectionStore, LOCAL_TAB_ID } from '../../stores/connectionStore';
 import { useScrollSyncStore } from '../../stores/scrollSyncStore';
 import { useLayoutStore } from '../../stores/layoutStore';
-import { useSplitPanelStore } from '../../stores/splitPanelStore';
 import { TabBar } from '../hosts/TabBar';
 import { LayoutSelector } from './LayoutSelector';
+import { isModalOpen } from '../ui/ModalDialog';
 import { useEffect, useCallback } from 'react';
 import clsx from 'clsx';
 
-export function Toolbar() {
-  const { entries, isLoading, refresh } = useJournalLogs();
-  const { filter, setFilter } = useFilterStore();
-  const { isFollowing, isFollowPaused, toggle } = useFollowMode();
+interface ToolbarProps {
+  onRefresh: () => void;
+  onToggleFollow: () => void;
+  followAvailable: boolean;
+}
+
+export function Toolbar({ onRefresh, onToggleFollow, followAvailable }: ToolbarProps) {
+  const entries = useFilterStore((state) => state.entries);
+  const isLoading = useFilterStore((state) => state.isLoading);
+  const filter = useFilterStore((state) => state.filter);
+  const setFilter = useFilterStore((state) => state.setFilter);
+  const isFollowing = useFilterStore((state) => state.isFollowing);
+  const isFollowPaused = useFilterStore((state) => state.isFollowPaused);
   const { viewMode, setViewMode } = useStatisticsStore();
   const { isOfflineMode, setOfflineMode, triggerSync } = useOfflineStore();
   const { isSyncing } = useOfflineSync();
   const { activeTabId, openTabs } = useConnectionStore();
   const { syncEnabled, setSyncEnabled } = useScrollSyncStore();
   const { layout } = useLayoutStore();
-  const { triggerRefresh: triggerPanelRefresh } = useSplitPanelStore();
 
-  // Combined refresh that handles both regular and split view
   const handleRefresh = useCallback(() => {
-    refresh(); // Refresh main LogViewer
-    if (layout !== 'single') {
-      triggerPanelRefresh(); // Also refresh split panels
-    }
-  }, [refresh, layout, triggerPanelRefresh]);
+    onRefresh();
+  }, [onRefresh]);
 
   // Show offline controls when active tab is a remote host
   const showOfflineControls = activeTabId !== LOCAL_TAB_ID;
@@ -59,6 +61,7 @@ export function Toolbar() {
   // Keyboard shortcut for follow mode (F key)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isModalOpen()) return;
       // Don't trigger if user is typing in an input field
       if (
         e.target instanceof HTMLInputElement ||
@@ -68,15 +71,15 @@ export function Toolbar() {
         return;
       }
 
-      if (e.key === 'f' || e.key === 'F') {
+      if ((e.key === 'f' || e.key === 'F') && followAvailable) {
         e.preventDefault();
-        toggle();
+        onToggleFollow();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [toggle]);
+  }, [followAvailable, onToggleFollow]);
 
   return (
     <div className="flex items-center justify-between px-3 py-2 bg-theme border-b border-theme gap-2 min-w-0">
@@ -101,15 +104,13 @@ export function Toolbar() {
           </button>
           <button
             onClick={() => setViewMode('statistics')}
-            disabled={isFollowing}
             className={clsx(
               'flex items-center justify-center gap-1 px-2 py-1.5 text-sm font-medium transition-colors',
               viewMode === 'statistics'
                 ? 'bg-theme-secondary text-theme'
-                : 'text-theme-secondary hover:text-theme hover:bg-theme-secondary/50',
-              isFollowing && 'opacity-50 cursor-not-allowed'
+                : 'text-theme-secondary hover:text-theme hover:bg-theme-secondary/50'
             )}
-            title={isFollowing ? 'Stop follow mode to view statistics' : 'View statistics'}
+            title="View statistics"
           >
             <BarChart2 className="h-4 w-4 shrink-0" />
             <span className="hidden xl:inline">Stats</span>
@@ -144,8 +145,8 @@ export function Toolbar() {
       <div className="flex items-center gap-1.5 shrink-0">
         {/* Follow mode toggle */}
         <button
-          onClick={toggle}
-          disabled={isLoading}
+          onClick={onToggleFollow}
+          disabled={!followAvailable || (isLoading && !isFollowing)}
           className={clsx(
             'flex items-center gap-1 px-2 py-1.5 text-sm font-medium rounded-lg transition-colors',
             'disabled:opacity-50 disabled:cursor-not-allowed',
@@ -153,7 +154,17 @@ export function Toolbar() {
               ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 border border-green-300 dark:border-green-700 hover:bg-green-200 dark:hover:bg-green-900/50'
               : 'text-theme bg-theme border border-theme hover:bg-theme-secondary'
           )}
-          title={isFollowing ? 'Stop following (F)' : 'Start following new entries (F)'}
+          title={
+            !followAvailable
+              ? layout !== 'single'
+                ? 'Follow mode is unavailable in split view'
+                : isOfflineMode
+                  ? 'Follow mode is unavailable offline'
+                  : 'Connect the displayed host to follow it'
+              : isFollowing
+                ? 'Stop following (F)'
+                : 'Start following new entries (F)'
+          }
         >
           <Radio className={clsx('h-4 w-4 shrink-0', isFollowing && 'animate-pulse')} />
           <span className="hidden xl:inline">{isFollowing ? 'Following' : 'Follow'}</span>

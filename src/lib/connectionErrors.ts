@@ -28,11 +28,10 @@ const CONNECTION_ERROR_KEYWORDS = [
  * @example
  * ```ts
  * try {
- *   await queryRemoteJournal(filter);
+ *   await queryRemoteJournal(hostId, filter);
  * } catch (err) {
  *   if (isConnectionError(err)) {
- *     // Fall back to offline storage
- *     await setOfflineMode(true);
+ *     useOfflineStore.getState().setOfflineMode(true);
  *   }
  * }
  * ```

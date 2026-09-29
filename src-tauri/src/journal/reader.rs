@@ -1,5 +1,6 @@
 use crate::error::JournalError;
-use crate::journal::parser::{get_priority, get_timestamp, parse_entry};
+use crate::journal::pagination::{scan_page, RawPage};
+use crate::journal::parser::{get_priority, get_timestamp, matches_post_filters, parse_entry};
 use crate::journal::types::{
     BootInfo, JournalFilter, JournalQueryResult, JournalStatistics, PriorityCount, ServiceCount,
     StatisticsRequest, SystemUnit, TimeseriesPoint,
@@ -14,167 +15,189 @@ pub struct JournalReader;
 
 impl JournalReader {
     pub fn query(filter: &JournalFilter) -> Result<JournalQueryResult, JournalError> {
-        let mut cmd = Command::new("journalctl");
-        cmd.arg("-o").arg("json");
-        cmd.arg("--no-pager");
+        if let Some(pattern) = &filter.grep_pattern {
+            if !pattern.is_empty() && Regex::new(pattern).is_err() {
+                return Err(JournalError::InvalidRegex(pattern.clone()));
+            }
+        }
 
-        // Apply unit filters
+        let minimum_timestamp = if filter.since.is_some() {
+            match Self::probe_since(filter)? {
+                Some(timestamp) => Some(timestamp),
+                None => return Ok(Self::empty_query_result()),
+            }
+        } else {
+            None
+        };
+
+        scan_page(filter, minimum_timestamp, |cursor, page_size| {
+            Self::fetch_raw_page(filter, cursor, cursor.is_none(), filter.reverse, page_size)
+        })
+    }
+
+    fn probe_since(filter: &JournalFilter) -> Result<Option<i64>, JournalError> {
+        Ok(Self::fetch_raw_page(filter, None, true, false, 1)?
+            .entries
+            .into_iter()
+            .next()
+            .map(|entry| entry.realtime_timestamp))
+    }
+
+    fn fetch_raw_page(
+        filter: &JournalFilter,
+        cursor: Option<&str>,
+        include_since: bool,
+        reverse: bool,
+        page_size: u32,
+    ) -> Result<RawPage, JournalError> {
+        let mut cmd = Command::new("journalctl");
+        cmd.arg("-o").arg("json").arg("--no-pager");
+
         for unit in &filter.units {
             cmd.arg("-u").arg(unit);
         }
-
-        // Priority filter - use range syntax MIN..MAX
-        // Without range, -p 3 would show 0-3, not just 3
         if !filter.priorities.is_empty() {
             let min = filter.priorities.iter().min().unwrap();
             let max = filter.priorities.iter().max().unwrap();
             cmd.arg("-p").arg(format!("{}..{}", min, max));
         }
-
-        // Cursor for pagination (mutually exclusive with --since)
-        // If we have a cursor, use it for pagination; otherwise use time filters
-        if let Some(cursor) = &filter.after_cursor {
+        if let Some(cursor) = cursor {
             cmd.arg("--after-cursor").arg(cursor);
-        } else {
-            // Time filters (only when not using cursor-based pagination)
+        } else if include_since {
             if let Some(since) = &filter.since {
                 cmd.arg("-S").arg(since);
             }
         }
-
         if let Some(until) = &filter.until {
             cmd.arg("-U").arg(until);
         }
-
-        // Boot filter
         if let Some(boot_id) = &filter.boot_id {
             cmd.arg("-b").arg(boot_id);
         } else if let Some(offset) = filter.boot_offset {
             cmd.arg("-b").arg(offset.to_string());
         }
-
-        // Identifier filter
         if let Some(identifier) = &filter.identifier {
             cmd.arg("-t").arg(identifier);
         }
-
-        // Grep pattern
         if let Some(pattern) = &filter.grep_pattern {
             if !pattern.is_empty() {
-                // Validate regex first
-                if Regex::new(pattern).is_err() {
-                    return Err(JournalError::InvalidRegex(pattern.clone()));
-                }
                 cmd.arg("-g").arg(pattern);
                 if !filter.case_sensitive {
                     cmd.arg("--case-sensitive=false");
                 }
             }
         }
-
-        // Reverse order (newest first)
-        if filter.reverse {
+        if reverse {
             cmd.arg("-r");
         }
-
-        // Limit
-        // Fetch one extra to determine if there are more entries
-        // If we have exclusions, fetch more to compensate for filtered entries
-        let fetch_limit = if filter.excluded_units.is_empty() {
-            filter.limit + 1
+        let use_oldest_first_limit = !reverse
+            && (cursor.is_none()
+                || filter
+                    .grep_pattern
+                    .as_deref()
+                    .is_some_and(|pattern| !pattern.is_empty()));
+        cmd.arg("-n").arg(if use_oldest_first_limit {
+            format!("+{page_size}")
         } else {
-            // Fetch 3x when excluding to ensure we get enough entries after filtering
-            (filter.limit * 3) + 1
-        };
-        cmd.arg("-n").arg(fetch_limit.to_string());
+            page_size.to_string()
+        });
 
         let output = cmd.output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if stderr.contains("No journal files were found")
-                || stderr.contains("Failed to open journal")
-            {
-                return Err(JournalError::JournalNotAvailable);
-            }
-            if stderr.contains("Permission denied") || stderr.contains("access denied") {
-                return Err(JournalError::PermissionDenied);
-            }
-            return Err(JournalError::ExecutionError(stderr.to_string()));
+        if Self::is_empty_grep_result(filter, &output) {
+            return Ok(RawPage {
+                entries: Vec::new(),
+                scanned: 0,
+                last_cursor: None,
+            });
         }
+        Self::check_output(&output)?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
         let mut entries = Vec::new();
-
-        for line in stdout.lines() {
+        let mut scanned = 0;
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
             if line.trim().is_empty() {
                 continue;
             }
-
+            scanned += 1;
             match parse_entry(line) {
-                Ok(entry) => {
-                    // Filter out excluded units
-                    if !filter.excluded_units.is_empty() {
-                        if let Some(ref unit) = entry.systemd_unit {
-                            if filter.excluded_units.contains(unit) {
-                                continue;
-                            }
-                        }
-                    }
-                    entries.push(entry);
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to parse journal entry: {}", e);
-                    continue;
-                }
+                Ok(entry) => entries.push(entry),
+                Err(error) => eprintln!("Warning: Failed to parse journal entry: {error}"),
             }
         }
-
-        // Determine if there are more entries and truncate to requested limit
-        let has_more = entries.len() > filter.limit as usize;
-        entries.truncate(filter.limit as usize);
-
-        let cursor_start = entries.first().map(|e| e.cursor.clone());
-        let cursor_end = entries.last().map(|e| e.cursor.clone());
-
-        Ok(JournalQueryResult {
+        let last_cursor = entries
+            .last()
+            .and_then(|entry| (!entry.cursor.is_empty()).then(|| entry.cursor.clone()));
+        Ok(RawPage {
             entries,
-            has_more,
-            cursor_start,
-            cursor_end,
+            scanned,
+            last_cursor,
         })
     }
 
-    pub fn count(filter: &JournalFilter) -> Result<u64, JournalError> {
-        let mut cmd = Command::new("journalctl");
-        cmd.arg("--no-pager");
-        cmd.arg("-q"); // Quiet mode
+    fn is_empty_grep_result(filter: &JournalFilter, output: &std::process::Output) -> bool {
+        output.status.code() == Some(1)
+            && filter
+                .grep_pattern
+                .as_deref()
+                .is_some_and(|pattern| !pattern.is_empty())
+            && output.stdout.is_empty()
+            && output.stderr.is_empty()
+    }
 
-        // Apply same filters as query (except limit and cursor)
+    fn check_output(output: &std::process::Output) -> Result<(), JournalError> {
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("No journal files were found") || stderr.contains("Failed to open journal") {
+            return Err(JournalError::JournalNotAvailable);
+        }
+        if stderr.contains("Permission denied") || stderr.contains("access denied") {
+            return Err(JournalError::PermissionDenied);
+        }
+        Err(JournalError::ExecutionError(stderr.into_owned()))
+    }
+
+    fn empty_query_result() -> JournalQueryResult {
+        JournalQueryResult {
+            entries: Vec::new(),
+            has_more: false,
+            cursor_start: None,
+            cursor_end: None,
+        }
+    }
+
+    pub fn count(filter: &JournalFilter) -> Result<u64, JournalError> {
+        if let Some(pattern) = &filter.grep_pattern {
+            if !pattern.is_empty() && Regex::new(pattern).is_err() {
+                return Err(JournalError::InvalidRegex(pattern.clone()));
+            }
+        }
+
+        let mut cmd = Command::new("journalctl");
+        cmd.arg("-o").arg("json").arg("--no-pager").arg("-q");
         for unit in &filter.units {
             cmd.arg("-u").arg(unit);
         }
-
         if !filter.priorities.is_empty() {
             let min = filter.priorities.iter().min().unwrap();
             let max = filter.priorities.iter().max().unwrap();
             cmd.arg("-p").arg(format!("{}..{}", min, max));
         }
-
         if let Some(since) = &filter.since {
             cmd.arg("-S").arg(since);
         }
-
         if let Some(until) = &filter.until {
             cmd.arg("-U").arg(until);
         }
-
         if let Some(boot_id) = &filter.boot_id {
             cmd.arg("-b").arg(boot_id);
         } else if let Some(offset) = filter.boot_offset {
             cmd.arg("-b").arg(offset.to_string());
         }
-
+        if let Some(identifier) = &filter.identifier {
+            cmd.arg("-t").arg(identifier);
+        }
         if let Some(pattern) = &filter.grep_pattern {
             if !pattern.is_empty() {
                 cmd.arg("-g").arg(pattern);
@@ -184,36 +207,23 @@ impl JournalReader {
             }
         }
 
-        // If we have excluded units, we need to use JSON output to filter them
-        if !filter.excluded_units.is_empty() {
-            cmd.arg("-o").arg("json");
-            let output = cmd.output()?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            let count = stdout
-                .lines()
-                .filter(|line| !line.trim().is_empty())
-                .filter(|line| {
-                    if let Ok(value) = serde_json::from_str::<Value>(line) {
-                        if let Some(unit) = value.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
-                            return !filter.excluded_units.contains(&unit.to_string());
-                        }
-                    }
-                    true // Include entries without a unit or parse errors
-                })
-                .count() as u64;
-
-            Ok(count)
-        } else {
-            // Output only count (faster when no exclusions)
-            cmd.arg("--output=cat");
-
-            let output = cmd.output()?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let count = stdout.lines().count() as u64;
-
-            Ok(count)
+        let output = cmd.output()?;
+        if Self::is_empty_grep_result(filter, &output) {
+            return Ok(0);
         }
+        Self::check_output(&output)?;
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| parse_entry(line).ok())
+            .filter(|entry| {
+                matches_post_filters(
+                    &filter.excluded_units,
+                    &filter.priorities,
+                    entry.systemd_unit.as_deref(),
+                    entry.priority,
+                )
+            })
+            .count() as u64)
     }
 
     pub fn list_units() -> Result<Vec<SystemUnit>, JournalError> {
@@ -383,13 +393,14 @@ impl JournalReader {
                 Err(_) => continue,
             };
 
-            // Check excluded units
-            if !filter.excluded_units.is_empty() {
-                if let Some(unit) = value.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
-                    if filter.excluded_units.contains(&unit.to_string()) {
-                        continue;
-                    }
-                }
+            let priority = get_priority(&value);
+            if !matches_post_filters(
+                &filter.excluded_units,
+                &filter.priorities,
+                value.get("_SYSTEMD_UNIT").and_then(|value| value.as_str()),
+                priority,
+            ) {
+                continue;
             }
 
             total_count += 1;
@@ -399,9 +410,6 @@ impl JournalReader {
             // Convert from microseconds to milliseconds, then bucket
             let timestamp_ms = timestamp / 1000;
             let bucket = (timestamp_ms / granularity_ms) * granularity_ms;
-
-            // Get priority
-            let priority = get_priority(&value);
             let is_error = priority <= 3; // emerg, alert, crit, err
             let is_warning = priority == 4;
 
