@@ -10,7 +10,7 @@ import {
 } from '../../lib/tauri';
 import { isHostKeyVerificationError, isAuthenticationError, getErrorMessage } from '../../lib/sshErrors';
 import { logError } from '../../lib/errorLogger';
-import type { RemoteHost, RemoteHostInput } from '../../lib/types';
+import type { HostKeyInfo, RemoteHost, RemoteHostInput } from '../../lib/types';
 import { HostKeyVerificationDialog } from './HostKeyVerificationDialog';
 import { HostCard } from './HostCard';
 import { HostEditor } from './HostEditor';
@@ -245,17 +245,13 @@ export function ConnectionManager({ isOpen, onClose }: ConnectionManagerProps) {
 
   // Handle host key verification dialog
   if (hostKeyVerification) {
-    const handleAcceptHostKey = async () => {
+    const handleAcceptHostKey = async (expectedKey: HostKeyInfo) => {
       const { host, password: pwd } = hostKeyVerification;
-      setHostKeyVerification(null);
       setIsConnecting(host.id);
       try {
-        // This accepts the key and connects in one step
-        await connectToHostAcceptKey(host.id, pwd);
-        // Refresh connection state from backend to update the store
+        await connectToHostAcceptKey(host.id, expectedKey, pwd);
         await useConnectionStore.getState().refreshConnectionState();
-      } catch {
-        // Error will be shown through connection store
+        setHostKeyVerification(null);
       } finally {
         setIsConnecting(null);
       }

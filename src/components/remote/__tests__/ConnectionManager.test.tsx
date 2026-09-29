@@ -13,8 +13,6 @@ vi.mock("../../../lib/tauri", () => ({
   saveHostPassword: vi.fn(),
   deleteHostPassword: vi.fn(),
   fetchHostKey: vi.fn(),
-  acceptHostKey: vi.fn(),
-  removeHostKey: vi.fn(),
   isKeyringAvailable: vi.fn(),
   listRemoteHosts: vi.fn(),
   addRemoteHost: vi.fn(),
@@ -812,6 +810,7 @@ describe("ConnectionManager", () => {
           port: 22,
           fingerprint: "SHA256:abc123xyz",
           keyType: "ED25519",
+          keyData: "base64-public-key",
         });
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);
@@ -842,6 +841,7 @@ describe("ConnectionManager", () => {
           port: 22,
           fingerprint: "SHA256:test-fingerprint-123",
           keyType: "RSA",
+          keyData: "base64-public-key",
         });
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);
@@ -872,6 +872,7 @@ describe("ConnectionManager", () => {
           port: 22,
           fingerprint: "SHA256:new-key",
           keyType: "ED25519",
+          keyData: "base64-public-key",
         });
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);
@@ -902,6 +903,7 @@ describe("ConnectionManager", () => {
           port: 22,
           fingerprint: "SHA256:new-key",
           keyType: "ED25519",
+          keyData: "base64-public-key",
         });
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);
@@ -931,12 +933,14 @@ describe("ConnectionManager", () => {
         vi.mocked(connectToHost).mockRejectedValue(
           new Error("Host key verification required")
         );
-        vi.mocked(fetchHostKey).mockResolvedValue({
+        const expectedKey = {
           host: "1.example.com",
           port: 22,
           fingerprint: "SHA256:new-key",
           keyType: "ED25519",
-        });
+          keyData: "base64-public-key",
+        };
+        vi.mocked(fetchHostKey).mockResolvedValue(expectedKey);
         vi.mocked(connectToHostAcceptKey).mockResolvedValue(undefined);
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);
@@ -954,7 +958,7 @@ describe("ConnectionManager", () => {
         await user.click(screen.getByRole("button", { name: /accept.*connect/i }));
 
         await waitFor(() => {
-          expect(connectToHostAcceptKey).toHaveBeenCalledWith("1", undefined);
+          expect(connectToHostAcceptKey).toHaveBeenCalledWith("1", expectedKey, undefined);
         });
       });
     });
@@ -972,6 +976,7 @@ describe("ConnectionManager", () => {
           port: 22,
           fingerprint: "SHA256:key",
           keyType: "ED25519",
+          keyData: "base64-public-key",
         });
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);
@@ -1159,6 +1164,7 @@ describe("ConnectionManager", () => {
           port: 22,
           fingerprint: "SHA256:fingerprint",
           keyType: "ED25519",
+          keyData: "base64-public-key",
         });
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);
@@ -1190,6 +1196,7 @@ describe("ConnectionManager", () => {
           port: 22,
           fingerprint: "SHA256:fingerprint",
           keyType: "ED25519",
+          keyData: "base64-public-key",
         });
 
         render(<ConnectionManager isOpen={true} onClose={vi.fn()} />);

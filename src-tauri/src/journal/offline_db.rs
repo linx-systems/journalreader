@@ -8,6 +8,10 @@ use crate::journal::hosts::get_app_config_dir;
 use rusqlite::{Connection, OpenFlags, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+#[cfg(unix)]
+use std::fs::{self, OpenOptions};
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 /// Current schema version for migration tracking
 #[cfg(test)]
@@ -18,6 +22,72 @@ fn get_database_path() -> Result<PathBuf, JournalError> {
     Ok(get_app_config_dir()?.join("offline_logs.db"))
 }
 
+fn sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut sidecar = path.as_os_str().to_os_string();
+    sidecar.push(suffix);
+    PathBuf::from(sidecar)
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> Result<(), JournalError> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let metadata = fs::symlink_metadata(path).map_err(|e| {
+        JournalError::ConfigError(format!("Failed to inspect {}: {}", path.display(), e))
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(JournalError::ConfigError(format!(
+            "Refusing to use non-regular offline database file {}",
+            path.display()
+        )));
+    }
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+        JournalError::ConfigError(format!(
+            "Failed to set permissions on {}: {}",
+            path.display(),
+            e
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> Result<(), JournalError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn prepare_database_file(path: &Path) -> Result<(), JournalError> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| {
+            JournalError::ConfigError(format!(
+                "Failed to securely create offline database {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+    set_private_file_permissions(path)
+}
+
+#[cfg(not(unix))]
+fn prepare_database_file(_path: &Path) -> Result<(), JournalError> {
+    Ok(())
+}
+
+fn secure_database_files(path: &Path) -> Result<(), JournalError> {
+    set_private_file_permissions(path)?;
+    set_private_file_permissions(&sidecar_path(path, "-wal"))?;
+    set_private_file_permissions(&sidecar_path(path, "-shm"))
+}
+
 /// SQLite database for offline journal log storage
 pub struct OfflineDatabase {
     pub(crate) conn: Connection,
@@ -26,16 +96,25 @@ pub struct OfflineDatabase {
 impl OfflineDatabase {
     /// Initialize the writable database, creating tables and indexes as needed.
     pub fn init() -> Result<Self, JournalError> {
-        let path = get_database_path()?;
-        let conn = Connection::open(&path).map_err(|e| {
+        Self::init_at(&get_database_path()?)
+    }
+
+    fn init_at(path: &Path) -> Result<Self, JournalError> {
+        secure_database_files(path)?;
+        prepare_database_file(path)?;
+        secure_database_files(path)?;
+
+        let conn = Connection::open(path).map_err(|e| {
             JournalError::ConfigError(format!("Failed to open offline database: {}", e))
         })?;
         conn.execute_batch("PRAGMA journal_mode = WAL;").map_err(|e| {
             JournalError::ConfigError(format!("Failed to enable WAL for offline database: {}", e))
         })?;
+        secure_database_files(path)?;
 
         let db = Self { conn };
         db.run_migrations()?;
+        secure_database_files(path)?;
 
         Ok(db)
     }
@@ -657,5 +736,39 @@ mod tests {
             )
             .unwrap();
         assert!(indexed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn database_and_existing_sidecars_are_restricted_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("offline.db");
+        let db = OfflineDatabase::init_at(&path).unwrap();
+        assert!(db.verify_schema().unwrap());
+
+        for candidate in [
+            path.clone(),
+            sidecar_path(&path, "-wal"),
+            sidecar_path(&path, "-shm"),
+        ] {
+            if candidate.exists() {
+                fs::set_permissions(&candidate, fs::Permissions::from_mode(0o644)).unwrap();
+            }
+        }
+
+        secure_database_files(&path).unwrap();
+
+        for candidate in [
+            path.clone(),
+            sidecar_path(&path, "-wal"),
+            sidecar_path(&path, "-shm"),
+        ] {
+            if candidate.exists() {
+                let mode = fs::metadata(&candidate).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600, "unexpected mode for {}", candidate.display());
+            }
+        }
     }
 }

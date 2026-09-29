@@ -351,11 +351,23 @@ fn write_csv(
     filter: &JournalFilter,
     path: &str,
 ) -> Result<u64, JournalError> {
+    use crate::journal::csv::{write_csv_row, CsvCell};
+
     let file = File::create(path)
         .map_err(|e| JournalError::ExecutionError(format!("Failed to create file: {}", e)))?;
     let mut writer = BufWriter::new(file);
-    writeln!(writer, "timestamp,priority,unit,identifier,pid,message")
-        .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV header: {}", e)))?;
+    write_csv_row(
+        &mut writer,
+        &[
+            CsvCell::Text("timestamp"),
+            CsvCell::Text("priority"),
+            CsvCell::Text("unit"),
+            CsvCell::Text("identifier"),
+            CsvCell::Text("pid"),
+            CsvCell::Text("message"),
+        ],
+    )
+    .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV header: {}", e)))?;
 
     let count = db.visit_entries(host_id, filter, |entry| write_csv_entry(&mut writer, entry))?;
     writer
@@ -365,16 +377,26 @@ fn write_csv(
 }
 
 fn write_csv_entry(writer: &mut BufWriter<File>, entry: &JournalEntry) -> Result<(), JournalError> {
+    use crate::journal::csv::{write_csv_row, CsvCell};
+
     let timestamp = format_timestamp_iso(entry.realtime_timestamp);
     let unit = entry.systemd_unit.as_deref().unwrap_or("");
     let identifier = entry.syslog_identifier.as_deref().unwrap_or("");
-    let pid = entry.pid.map(|pid| pid.to_string()).unwrap_or_default();
-    let message = escape_csv(&entry.message);
+    let pid = entry
+        .pid
+        .map(|pid| CsvCell::Integer(i64::from(pid)))
+        .unwrap_or(CsvCell::Empty);
 
-    writeln!(
+    write_csv_row(
         writer,
-        "{},{},{},{},{},{}",
-        timestamp, entry.priority, unit, identifier, pid, message
+        &[
+            CsvCell::Text(&timestamp),
+            CsvCell::Integer(i64::from(entry.priority)),
+            CsvCell::Text(unit),
+            CsvCell::Text(identifier),
+            pid,
+            CsvCell::Text(&entry.message),
+        ],
     )
     .map_err(|e| JournalError::ExecutionError(format!("Failed to write CSV row: {}", e)))
 }
@@ -416,14 +438,6 @@ fn priority_to_label(priority: u8) -> &'static str {
     }
 }
 
-/// Escape a string for CSV format.
-fn escape_csv(s: &str) -> String {
-    if s.contains('"') || s.contains(',') || s.contains('\n') || s.contains('\r') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    }
-}
 
 // ============================================================================
 // Offline Settings Commands

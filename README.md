@@ -91,6 +91,12 @@ Access Settings from the toolbar to:
 - Create and customize themes
 - Import/export theme configurations
 
+### Security
+
+- SSH host-key approval is bound to the exact public key and endpoint shown in the verification dialog; authentication stops if the server presents a different key.
+- Journal values exported to CSV are encoded as data and formula-like cells are neutralized before opening them in spreadsheet software.
+- The Linux configuration directory is restricted to the current user (`0700`), and the offline SQLite cache and existing sidecars are restricted to `0600`.
+
 ## Tech Stack
 
 **Frontend:**

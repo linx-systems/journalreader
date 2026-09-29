@@ -4,18 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostKeyVerificationDialog } from "../HostKeyVerificationDialog";
 import type { RemoteHost, HostKeyInfo } from "../../../lib/types";
 
-// Mock the tauri module
+// Mock the Tauri module
 vi.mock("../../../lib/tauri", () => ({
   fetchHostKey: vi.fn(),
-  acceptHostKey: vi.fn(),
-  removeHostKey: vi.fn(),
 }));
 
-import {
-  fetchHostKey,
-  acceptHostKey,
-  removeHostKey,
-} from "../../../lib/tauri";
+import { fetchHostKey } from "../../../lib/tauri";
 
 // Helper to create test hosts
 function createTestHost(
@@ -42,6 +36,7 @@ function createMockHostKeyInfo(overrides: Partial<HostKeyInfo> = {}): HostKeyInf
     port: 22,
     fingerprint: "SHA256:abc123xyz789def456",
     keyType: "ED25519",
+    keyData: "base64-public-key",
     ...overrides,
   };
 }
@@ -252,12 +247,12 @@ describe("HostKeyVerificationDialog", () => {
 
   describe("User Actions", () => {
     describe("Accept button", () => {
-      it("saves key and triggers callback for new host key", async () => {
+      it("passes the exact displayed host key to the connection callback", async () => {
         const user = userEvent.setup();
         const host = createTestHost("1", "New Host");
-        const onAccept = vi.fn();
-        vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-        vi.mocked(acceptHostKey).mockResolvedValue(createMockHostKeyInfo());
+        const displayedKey = createMockHostKeyInfo();
+        const onAccept = vi.fn().mockResolvedValue(undefined);
+        vi.mocked(fetchHostKey).mockResolvedValue(displayedKey);
 
         render(
           <HostKeyVerificationDialog
@@ -279,49 +274,7 @@ describe("HostKeyVerificationDialog", () => {
         );
 
         await waitFor(() => {
-          expect(acceptHostKey).toHaveBeenCalledWith("1");
-          expect(onAccept).toHaveBeenCalled();
-        });
-
-        // Should NOT call removeHostKey for new keys
-        expect(removeHostKey).not.toHaveBeenCalled();
-      });
-
-      it("removes old key first then saves new key for changed host key", async () => {
-        const user = userEvent.setup();
-        const host = createTestHost("1", "Changed Host");
-        host.hostname = "changed.example.com";
-        host.port = 22;
-        const onAccept = vi.fn();
-        vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-        vi.mocked(removeHostKey).mockResolvedValue(true);
-        vi.mocked(acceptHostKey).mockResolvedValue(createMockHostKeyInfo());
-
-        render(
-          <HostKeyVerificationDialog
-            host={host}
-            errorMessage="HOST KEY HAS CHANGED"
-            onAccept={onAccept}
-            onReject={vi.fn()}
-          />
-        );
-
-        await waitFor(() => {
-          expect(
-            screen.getByRole("button", { name: /accept changed key/i })
-          ).toBeInTheDocument();
-        });
-
-        await user.click(
-          screen.getByRole("button", { name: /accept changed key/i })
-        );
-
-        await waitFor(() => {
-          // Should remove old key first
-          expect(removeHostKey).toHaveBeenCalledWith("changed.example.com", 22);
-          // Then accept new key
-          expect(acceptHostKey).toHaveBeenCalledWith("1");
-          expect(onAccept).toHaveBeenCalled();
+          expect(onAccept).toHaveBeenCalledWith(displayedKey);
         });
       });
 
@@ -356,21 +309,21 @@ describe("HostKeyVerificationDialog", () => {
         });
       });
 
-      it("disables accept button while accepting key", async () => {
+      it("disables accept button while connecting with the approved key", async () => {
         const user = userEvent.setup();
         const host = createTestHost("1", "Test Host");
         vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
         let resolveAccept: () => void;
-        const acceptPromise = new Promise<HostKeyInfo>((resolve) => {
-          resolveAccept = () => resolve(createMockHostKeyInfo());
+        const acceptPromise = new Promise<void>((resolve) => {
+          resolveAccept = resolve;
         });
-        vi.mocked(acceptHostKey).mockReturnValue(acceptPromise);
+        const onAccept = vi.fn(() => acceptPromise);
 
         render(
           <HostKeyVerificationDialog
             host={host}
             errorMessage="Host key verification required"
-            onAccept={vi.fn()}
+            onAccept={onAccept}
             onReject={vi.fn()}
           />
         );
@@ -385,20 +338,18 @@ describe("HostKeyVerificationDialog", () => {
           screen.getByRole("button", { name: /accept & connect/i })
         );
 
-        // Button should be disabled while accepting
         expect(
           screen.getByRole("button", { name: /accept & connect/i })
         ).toBeDisabled();
-
-        // Resolve to complete
         resolveAccept!();
       });
     });
 
     describe("Cancel button", () => {
-      it("closes dialog without saving when cancel button is clicked", async () => {
+      it("closes dialog without connecting when cancel button is clicked", async () => {
         const user = userEvent.setup();
         const host = createTestHost("1", "Test Host");
+        const onAccept = vi.fn();
         const onReject = vi.fn();
         vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
 
@@ -406,7 +357,7 @@ describe("HostKeyVerificationDialog", () => {
           <HostKeyVerificationDialog
             host={host}
             errorMessage="Host key verification required"
-            onAccept={vi.fn()}
+            onAccept={onAccept}
             onReject={onReject}
           />
         );
@@ -418,8 +369,7 @@ describe("HostKeyVerificationDialog", () => {
         await user.click(screen.getByRole("button", { name: "Cancel" }));
 
         expect(onReject).toHaveBeenCalled();
-        expect(acceptHostKey).not.toHaveBeenCalled();
-        expect(removeHostKey).not.toHaveBeenCalled();
+        expect(onAccept).not.toHaveBeenCalled();
       });
 
       it("closes dialog when X button is clicked", async () => {
@@ -522,45 +472,14 @@ describe("HostKeyVerificationDialog", () => {
       });
     });
 
-    describe("Key save failure", () => {
-      it("handles key save failure gracefully", async () => {
+    describe("Connection failure", () => {
+      it("shows a failure from the key-bound connection and prevents a repeat click", async () => {
         const user = userEvent.setup();
         const host = createTestHost("1", "Test Host");
+        const onAccept = vi
+          .fn()
+          .mockRejectedValue(new Error("Host key changed before connection"));
         vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-        vi.mocked(acceptHostKey).mockRejectedValue(new Error("Failed to save key to known_hosts"));
-
-        render(
-          <HostKeyVerificationDialog
-            host={host}
-            errorMessage="Host key verification required"
-            onAccept={vi.fn()}
-            onReject={vi.fn()}
-          />
-        );
-
-        await waitFor(() => {
-          expect(
-            screen.getByRole("button", { name: /accept & connect/i })
-          ).not.toBeDisabled();
-        });
-
-        await user.click(
-          screen.getByRole("button", { name: /accept & connect/i })
-        );
-
-        await waitFor(() => {
-          expect(
-            screen.getByText(/Failed to save key to known_hosts/i)
-          ).toBeInTheDocument();
-        });
-      });
-
-      it("does not call onAccept when key save fails", async () => {
-        const user = userEvent.setup();
-        const host = createTestHost("1", "Test Host");
-        const onAccept = vi.fn();
-        vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-        vi.mocked(acceptHostKey).mockRejectedValue(new Error("Save failed"));
 
         render(
           <HostKeyVerificationDialog
@@ -582,120 +501,13 @@ describe("HostKeyVerificationDialog", () => {
         );
 
         await waitFor(() => {
-          expect(screen.getByText(/Save failed/i)).toBeInTheDocument();
-        });
-
-        expect(onAccept).not.toHaveBeenCalled();
-      });
-
-      it("keeps accept button disabled when error is displayed", async () => {
-        const user = userEvent.setup();
-        const host = createTestHost("1", "Test Host");
-        vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-        vi.mocked(acceptHostKey).mockRejectedValue(new Error("Save failed"));
-
-        render(
-          <HostKeyVerificationDialog
-            host={host}
-            errorMessage="Host key verification required"
-            onAccept={vi.fn()}
-            onReject={vi.fn()}
-          />
-        );
-
-        await waitFor(() => {
           expect(
-            screen.getByRole("button", { name: /accept & connect/i })
-          ).not.toBeDisabled();
+            screen.getByText(/Host key changed before connection/i)
+          ).toBeInTheDocument();
         });
-
-        await user.click(
-          screen.getByRole("button", { name: /accept & connect/i })
-        );
-
-        await waitFor(() => {
-          expect(screen.getByText(/Save failed/i)).toBeInTheDocument();
-        });
-
-        // Button should remain disabled while error is displayed
-        // This prevents users from repeatedly clicking when there's an error
         expect(
           screen.getByRole("button", { name: /accept & connect/i })
         ).toBeDisabled();
-      });
-
-      it("stops the accepting spinner after save failure", async () => {
-        const user = userEvent.setup();
-        const host = createTestHost("1", "Test Host");
-        vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-        vi.mocked(acceptHostKey).mockRejectedValue(new Error("Save failed"));
-
-        render(
-          <HostKeyVerificationDialog
-            host={host}
-            errorMessage="Host key verification required"
-            onAccept={vi.fn()}
-            onReject={vi.fn()}
-          />
-        );
-
-        await waitFor(() => {
-          expect(
-            screen.getByRole("button", { name: /accept & connect/i })
-          ).not.toBeDisabled();
-        });
-
-        await user.click(
-          screen.getByRole("button", { name: /accept & connect/i })
-        );
-
-        await waitFor(() => {
-          expect(screen.getByText(/Save failed/i)).toBeInTheDocument();
-        });
-
-        // The button text should still say "Accept & Connect" (not showing spinner state forever)
-        expect(
-          screen.getByRole("button", { name: /accept & connect/i })
-        ).toBeInTheDocument();
-      });
-    });
-
-    describe("Old key removal failure", () => {
-      it("handles old key removal failure gracefully", async () => {
-        const user = userEvent.setup();
-        const host = createTestHost("1", "Changed Host");
-        host.hostname = "changed.example.com";
-        host.port = 22;
-        vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-        vi.mocked(removeHostKey).mockRejectedValue(new Error("Failed to remove old key"));
-
-        render(
-          <HostKeyVerificationDialog
-            host={host}
-            errorMessage="HOST KEY HAS CHANGED"
-            onAccept={vi.fn()}
-            onReject={vi.fn()}
-          />
-        );
-
-        await waitFor(() => {
-          expect(
-            screen.getByRole("button", { name: /accept changed key/i })
-          ).not.toBeDisabled();
-        });
-
-        await user.click(
-          screen.getByRole("button", { name: /accept changed key/i })
-        );
-
-        await waitFor(() => {
-          expect(
-            screen.getByText(/Failed to remove old key/i)
-          ).toBeInTheDocument();
-        });
-
-        // Should not proceed to accept the new key
-        expect(acceptHostKey).not.toHaveBeenCalled();
       });
     });
   });
@@ -734,21 +546,20 @@ describe("HostKeyVerificationDialog", () => {
         });
       });
 
-      it("shows loading spinner during key accept operation", async () => {
+      it("shows loading spinner during key-bound connection", async () => {
         const user = userEvent.setup();
         const host = createTestHost("1", "Test Host");
         vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
         let resolveAccept: () => void;
-        const acceptPromise = new Promise<HostKeyInfo>((resolve) => {
-          resolveAccept = () => resolve(createMockHostKeyInfo());
+        const acceptPromise = new Promise<void>((resolve) => {
+          resolveAccept = resolve;
         });
-        vi.mocked(acceptHostKey).mockReturnValue(acceptPromise);
 
         render(
           <HostKeyVerificationDialog
             host={host}
             errorMessage="Host key verification required"
-            onAccept={vi.fn()}
+            onAccept={() => acceptPromise}
             onReject={vi.fn()}
           />
         );
@@ -763,11 +574,9 @@ describe("HostKeyVerificationDialog", () => {
           screen.getByRole("button", { name: /accept & connect/i })
         );
 
-        // Button should still say "Accept & Connect" but have a spinner
-        const button = screen.getByRole("button", { name: /accept & connect/i });
-        expect(button).toBeDisabled();
-
-        // Resolve to complete
+        expect(
+          screen.getByRole("button", { name: /accept & connect/i })
+        ).toBeDisabled();
         resolveAccept!();
       });
     });
@@ -942,38 +751,6 @@ describe("HostKeyVerificationDialog", () => {
       });
     });
 
-    it("uses hostname and port for removing old key on changed key", async () => {
-      const user = userEvent.setup();
-      const host = createTestHost("host-id", "Changed Host");
-      host.hostname = "custom-host.example.com";
-      host.port = 3333;
-      vi.mocked(fetchHostKey).mockResolvedValue(createMockHostKeyInfo());
-      vi.mocked(removeHostKey).mockResolvedValue(true);
-      vi.mocked(acceptHostKey).mockResolvedValue(createMockHostKeyInfo());
-
-      render(
-        <HostKeyVerificationDialog
-          host={host}
-          errorMessage="HOST KEY HAS CHANGED"
-          onAccept={vi.fn()}
-          onReject={vi.fn()}
-        />
-      );
-
-      await waitFor(() => {
-        expect(
-          screen.getByRole("button", { name: /accept changed key/i })
-        ).not.toBeDisabled();
-      });
-
-      await user.click(
-        screen.getByRole("button", { name: /accept changed key/i })
-      );
-
-      await waitFor(() => {
-        expect(removeHostKey).toHaveBeenCalledWith("custom-host.example.com", 3333);
-      });
-    });
   });
   it("rejects once without accepting when native Escape cancels the verification", async () => {
     const host = createTestHost("host-id", "Untrusted Host");
@@ -995,6 +772,5 @@ describe("HostKeyVerificationDialog", () => {
 
     expect(onReject).toHaveBeenCalledTimes(1);
     expect(onAccept).not.toHaveBeenCalled();
-    expect(acceptHostKey).not.toHaveBeenCalled();
   });
 });

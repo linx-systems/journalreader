@@ -4,6 +4,7 @@
 //! against a stored known_hosts file.
 
 use crate::error::JournalError;
+use crate::journal::hosts::get_app_config_dir;
 use ssh2::Session;
 use std::collections::HashMap;
 use std::fs;
@@ -49,14 +50,16 @@ pub enum HostKeyStatus {
     },
 }
 
-/// Information about a host's SSH key for UI display
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+/// Information about a host's SSH key for UI display and consent binding.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostKeyInfo {
     pub host: String,
     pub port: u16,
     pub fingerprint: String,
     pub key_type: String,
+    /// Base64-encoded public host key. This is public key material, not a secret.
+    pub key_data: String,
 }
 
 /// Storage for known SSH host keys
@@ -85,20 +88,7 @@ impl KnownHostsStorage {
 
     /// Get the path to the known_hosts file
     fn get_file_path() -> Result<PathBuf, JournalError> {
-        let config_dir = dirs::config_dir().ok_or_else(|| {
-            JournalError::ConfigError("Could not find config directory".to_string())
-        })?;
-
-        let app_config_dir = config_dir.join("journal-reader");
-
-        // Create directory if it doesn't exist
-        if !app_config_dir.exists() {
-            fs::create_dir_all(&app_config_dir).map_err(|e| {
-                JournalError::ConfigError(format!("Failed to create config directory: {}", e))
-            })?;
-        }
-
-        Ok(app_config_dir.join("known_hosts.json"))
+        Ok(get_app_config_dir()?.join("known_hosts.json"))
     }
 
     /// Save the known hosts to disk with secure permissions
@@ -162,36 +152,61 @@ impl KnownHostsStorage {
         }
     }
 
-    /// Accept and store a new host key
-    pub fn accept_host_key(
+    /// Verify that the current session presents exactly the key approved by the user.
+    pub fn verify_expected_host_key(
+        session: &Session,
+        hostname: &str,
+        port: u16,
+        expected: &HostKeyInfo,
+    ) -> Result<HostKeyInfo, JournalError> {
+        let observed = Self::get_session_host_key_info(session, hostname, port)?;
+        Self::ensure_expected_host_key(&observed, expected)?;
+        Ok(observed)
+    }
+
+    fn ensure_expected_host_key(
+        observed: &HostKeyInfo,
+        expected: &HostKeyInfo,
+    ) -> Result<(), JournalError> {
+        if observed != expected {
+            return Err(JournalError::HostKeyChanged(
+                "The server presented a different host key after confirmation. \
+                 No key was saved and authentication was not attempted."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Store a host key only when the current session matches the user's approval.
+    pub fn accept_expected_host_key(
         &mut self,
         session: &Session,
         hostname: &str,
         port: u16,
+        expected: &HostKeyInfo,
     ) -> Result<(), JournalError> {
-        let (key_type, fingerprint, key_data) = Self::extract_host_key_info(session)?;
+        let observed = Self::verify_expected_host_key(session, hostname, port, expected)?;
         let host_key = Self::make_host_key(hostname, port);
 
         let stored_key = StoredHostKey {
             host: host_key.clone(),
-            key_type,
-            key_data,
-            fingerprint,
+            key_type: observed.key_type,
+            key_data: observed.key_data,
+            fingerprint: observed.fingerprint,
             first_seen: chrono::Utc::now().to_rfc3339(),
         };
 
-        self.hosts.insert(host_key, stored_key);
-        self.save()
-    }
-
-    /// Remove a host key (useful when user wants to re-accept after change)
-    pub fn remove_host_key(&mut self, hostname: &str, port: u16) -> Result<bool, JournalError> {
-        let host_key = Self::make_host_key(hostname, port);
-        let removed = self.hosts.remove(&host_key).is_some();
-        if removed {
-            self.save()?;
+        let previous = self.hosts.insert(host_key.clone(), stored_key);
+        if let Err(error) = self.save() {
+            if let Some(previous) = previous {
+                self.hosts.insert(host_key, previous);
+            } else {
+                self.hosts.remove(&host_key);
+            }
+            return Err(error);
         }
-        Ok(removed)
+        Ok(())
     }
 
     /// Get stored host key info for a host
@@ -235,18 +250,19 @@ impl KnownHostsStorage {
         Ok((key_type_str.to_string(), fingerprint, key_data))
     }
 
-    /// Get host key info from a session for UI display
+    /// Get host key info from a session for UI display and consent binding.
     pub fn get_session_host_key_info(
         session: &Session,
         hostname: &str,
         port: u16,
     ) -> Result<HostKeyInfo, JournalError> {
-        let (key_type, fingerprint, _) = Self::extract_host_key_info(session)?;
+        let (key_type, fingerprint, key_data) = Self::extract_host_key_info(session)?;
         Ok(HostKeyInfo {
             host: hostname.to_string(),
             port,
             fingerprint,
             key_type,
+            key_data,
         })
     }
 }
@@ -279,5 +295,28 @@ mod tests {
             KnownHostsStorage::make_host_key("192.168.1.1", 2222),
             "[192.168.1.1]:2222"
         );
+    }
+
+    #[test]
+    fn expected_host_key_requires_exact_identity() {
+        let expected = HostKeyInfo {
+            host: "example.com".to_string(),
+            port: 22,
+            fingerprint: "SHA256:expected".to_string(),
+            key_type: "ssh-ed25519".to_string(),
+            key_data: "public-key-data".to_string(),
+        };
+
+        assert!(KnownHostsStorage::ensure_expected_host_key(&expected, &expected).is_ok());
+
+        for observed in [
+            HostKeyInfo { host: "other.example".to_string(), ..expected.clone() },
+            HostKeyInfo { port: 2222, ..expected.clone() },
+            HostKeyInfo { fingerprint: "SHA256:different".to_string(), ..expected.clone() },
+            HostKeyInfo { key_type: "ssh-rsa".to_string(), ..expected.clone() },
+            HostKeyInfo { key_data: "different-key-data".to_string(), ..expected.clone() },
+        ] {
+            assert!(KnownHostsStorage::ensure_expected_host_key(&observed, &expected).is_err());
+        }
     }
 }

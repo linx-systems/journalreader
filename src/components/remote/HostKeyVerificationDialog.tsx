@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react';
 import { ShieldAlert, ShieldCheck, Loader2, AlertTriangle, X } from 'lucide-react';
-import { fetchHostKey, acceptHostKey, removeHostKey } from '../../lib/tauri';
+import { fetchHostKey } from '../../lib/tauri';
 import type { RemoteHost, HostKeyInfo } from '../../lib/types';
 import { ModalDialog } from '../ui/ModalDialog';
 
 interface HostKeyVerificationDialogProps {
   host: RemoteHost;
   errorMessage: string;
-  onAccept: () => void;
+  onAccept: (hostKeyInfo: HostKeyInfo) => Promise<void>;
   onReject: () => void;
 }
 
@@ -42,16 +42,12 @@ export function HostKeyVerificationDialog({
   }, [host.id]);
 
   const handleAccept = async () => {
+    if (!hostKeyInfo) return;
+
     setIsAccepting(true);
     setError(null);
     try {
-      // If the key changed, we need to remove the old key first
-      if (isKeyChanged) {
-        await removeHostKey(host.hostname, host.port);
-      }
-      // Accept the new key
-      await acceptHostKey(host.id);
-      onAccept();
+      await onAccept(hostKeyInfo);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setIsAccepting(false);

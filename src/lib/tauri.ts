@@ -101,9 +101,10 @@ export async function testHostConnection(
 
 export async function connectToHostAcceptKey(
   hostId: string,
+  expectedKey: HostKeyInfo,
   password?: string
 ): Promise<void> {
-  return invoke<void>('connect_to_host_accept_key', { hostId, password });
+  return invoke<void>('connect_to_host_accept_key', { hostId, expectedKey, password });
 }
 
 // ============================================================================
@@ -121,13 +122,6 @@ export async function fetchHostKey(hostId: string): Promise<HostKeyInfo> {
   return invoke<HostKeyInfo>('fetch_host_key', { hostId });
 }
 
-export async function acceptHostKey(hostId: string): Promise<HostKeyInfo> {
-  return invoke<HostKeyInfo>('accept_host_key', { hostId });
-}
-
-export async function removeHostKey(hostname: string, port: number): Promise<boolean> {
-  return invoke<boolean>('remove_host_key', { hostname, port });
-}
 
 // ============================================================================
 // Remote Journal Commands

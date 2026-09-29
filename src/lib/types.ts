@@ -292,6 +292,8 @@ export interface HostKeyInfo {
   port: number;
   fingerprint: string;
   keyType: string;
+  /** Base64-encoded public host key used to bind consent to the connection. */
+  keyData: string;
 }
 
 export interface StoredHostKey {

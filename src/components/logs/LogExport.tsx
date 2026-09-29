@@ -5,6 +5,7 @@ import { writeTextFile } from '@tauri-apps/plugin-fs';
 import type { JournalEntry, JournalFilter } from '../../lib/types';
 import { logError } from '../../lib/errorLogger';
 import { PRIORITY_LABELS } from '../../lib/types';
+import { serializeCsvDocument, type CsvCell } from '../../lib/csv';
 
 export interface LogExportResult {
   type: 'success' | 'error';
@@ -34,12 +35,6 @@ function formatTimestamp(realtimeTimestamp: number): string {
   return new Date(realtimeTimestamp / 1000).toISOString();
 }
 
-function escapeCSV(value: string): string {
-  if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
 
 function generateExportData(
   entries: JournalEntry[],
@@ -80,28 +75,25 @@ function generateExportData(
     }
 
     case 'csv': {
-      const header = 'timestamp,priority,priority_label,unit,message,boot_id,pid';
-      const rows = entries.map((e) =>
-        [
-          formatTimestamp(e.realtimeTimestamp),
-          e.priority,
-          PRIORITY_LABELS[e.priority],
-          escapeCSV(e.systemdUnit || e.syslogIdentifier || ''),
-          escapeCSV(e.message),
-          e.bootId,
-          e.pid ?? '',
-        ].join(',')
-      );
-      const metaComment = [
-        `# Exported: ${metadata.exportedAt}`,
-        `# Entry Count: ${metadata.entryCount}`,
-        filter.grepPattern ? `# Search Pattern: ${filter.grepPattern}` : null,
-        filter.since ? `# Since: ${filter.since}` : null,
-        filter.until ? `# Until: ${filter.until}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
-      return `${metaComment}\n${header}\n${rows.join('\n')}`;
+      const rows: CsvCell[][] = [
+        ['# Exported', metadata.exportedAt],
+        ['# Entry Count', metadata.entryCount],
+        ...(filter.grepPattern ? [['# Search Pattern', filter.grepPattern]] : []),
+        ...(filter.since ? [['# Since', filter.since]] : []),
+        ...(filter.until ? [['# Until', filter.until]] : []),
+        [],
+        ['timestamp', 'priority', 'priority_label', 'unit', 'message', 'boot_id', 'pid'],
+        ...entries.map((entry): CsvCell[] => [
+          formatTimestamp(entry.realtimeTimestamp),
+          entry.priority,
+          PRIORITY_LABELS[entry.priority],
+          entry.systemdUnit || entry.syslogIdentifier || '',
+          entry.message,
+          entry.bootId,
+          entry.pid ?? '',
+        ]),
+      ];
+      return serializeCsvDocument(rows);
     }
 
     case 'text': {

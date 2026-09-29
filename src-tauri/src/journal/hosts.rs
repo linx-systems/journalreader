@@ -1,23 +1,38 @@
 use crate::error::JournalError;
 use crate::journal::types::{RemoteHost, RemoteHostInput};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
-/// Get the application config directory path
+#[cfg(unix)]
+fn ensure_private_directory(path: &Path) -> Result<(), JournalError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|e| {
+        JournalError::ConfigError(format!(
+            "Failed to set permissions on config directory {}: {}",
+            path.display(),
+            e
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn ensure_private_directory(_path: &Path) -> Result<(), JournalError> {
+    Ok(())
+}
+
+/// Get the application config directory path and enforce private access.
 pub fn get_app_config_dir() -> Result<PathBuf, JournalError> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| JournalError::ConfigError("Could not find config directory".to_string()))?;
-
     let app_config_dir = config_dir.join("journal-reader");
 
-    // Create directory if it doesn't exist
-    if !app_config_dir.exists() {
-        fs::create_dir_all(&app_config_dir).map_err(|e| {
-            JournalError::ConfigError(format!("Failed to create config directory: {}", e))
-        })?;
-    }
+    fs::create_dir_all(&app_config_dir).map_err(|e| {
+        JournalError::ConfigError(format!("Failed to create config directory: {}", e))
+    })?;
+    ensure_private_directory(&app_config_dir)?;
 
     Ok(app_config_dir)
 }
@@ -219,4 +234,23 @@ pub type SharedHostStorage = Arc<Mutex<HostStorage>>;
 pub fn new_shared_host_storage() -> Result<SharedHostStorage, JournalError> {
     let storage = HostStorage::load()?;
     Ok(Arc::new(Mutex::new(storage)))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn private_directory_permissions_are_enforced_for_existing_directories() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let app_dir = temp_dir.path().join("journal-reader");
+        fs::create_dir(&app_dir).unwrap();
+        fs::set_permissions(&app_dir, fs::Permissions::from_mode(0o755)).unwrap();
+
+        ensure_private_directory(&app_dir).unwrap();
+
+        let mode = fs::metadata(&app_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
 }

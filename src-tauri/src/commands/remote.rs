@@ -219,16 +219,15 @@ pub async fn test_host_connection(
     .map_err(|e| JournalError::ExecutionError(e.to_string()))?
 }
 
-/// Connect to a host, accepting the host key if it's new
-/// Use this when the user has explicitly accepted a new host key
+/// Connect to a host using the exact host key the user approved.
 #[tauri::command]
 pub async fn connect_to_host_accept_key(
     host_id: String,
+    expected_key: HostKeyInfo,
     password: Option<String>,
     host_state: State<'_, HostStorageState>,
     conn_state: State<'_, ConnectionManagerState>,
 ) -> Result<(), JournalError> {
-    // Get the host configuration
     let host = {
         let storage = host_state
             .0
@@ -240,13 +239,12 @@ pub async fn connect_to_host_accept_key(
             .ok_or_else(|| JournalError::HostNotFound(host_id.clone()))?
     };
 
-    // Connect in a blocking task, accepting the new host key
     let conn_manager = conn_state.0.clone();
     tokio::task::spawn_blocking(move || {
         let mut manager = conn_manager
             .lock()
             .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-        manager.connect_and_accept_key(&host, password.as_deref())
+        manager.connect_and_accept_key(&host, password.as_deref(), &expected_key)
     })
     .await
     .map_err(|e| JournalError::ExecutionError(e.to_string()))??;
@@ -321,83 +319,6 @@ pub async fn fetch_host_key(
     .map_err(|e| JournalError::ExecutionError(e.to_string()))?
 }
 
-/// Accept a host key for a specific host
-/// This should be called after the user confirms they trust the host key
-#[tauri::command]
-pub async fn accept_host_key(
-    host_id: String,
-    host_state: State<'_, HostStorageState>,
-    known_hosts_state: State<'_, KnownHostsStorageState>,
-) -> Result<HostKeyInfo, JournalError> {
-    // Get the host configuration
-    let host = {
-        let storage = host_state
-            .0
-            .lock()
-            .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-        storage
-            .get(&host_id)
-            .cloned()
-            .ok_or_else(|| JournalError::HostNotFound(host_id.clone()))?
-    };
-
-    let known_hosts = known_hosts_state.0.clone();
-
-    // Connect temporarily to get and accept the host key
-    tokio::task::spawn_blocking(move || {
-        use ssh2::Session;
-        use std::net::TcpStream;
-        use std::time::Duration;
-
-        // Connect to get the host key
-        let addr = format!("{}:{}", host.hostname, host.port);
-        let tcp = TcpStream::connect_timeout(
-            &addr.parse().map_err(|e| {
-                JournalError::SshConnectionError(format!("Invalid address: {}", e))
-            })?,
-            Duration::from_secs(10),
-        )
-        .map_err(|e| JournalError::SshConnectionError(format!("Failed to connect: {}", e)))?;
-
-        let mut session = Session::new()
-            .map_err(|e| JournalError::SshConnectionError(format!("Failed to create session: {}", e)))?;
-
-        session.set_tcp_stream(tcp);
-        session
-            .handshake()
-            .map_err(|e| JournalError::SshConnectionError(format!("SSH handshake failed: {}", e)))?;
-
-        // Get host key info
-        let host_key_info =
-            KnownHostsStorage::get_session_host_key_info(&session, &host.hostname, host.port)?;
-
-        // Accept the host key
-        {
-            let mut storage = known_hosts
-                .lock()
-                .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-            storage.accept_host_key(&session, &host.hostname, host.port)?;
-        }
-
-        Ok(host_key_info)
-    })
-    .await
-    .map_err(|e| JournalError::ExecutionError(e.to_string()))?
-}
-
-/// Remove a stored host key (useful when the user wants to re-accept after a change)
-#[tauri::command]
-pub fn remove_host_key(
-    hostname: String,
-    port: u16,
-    state: State<'_, KnownHostsStorageState>,
-) -> Result<bool, JournalError> {
-    let mut storage = state
-        .0
-        .lock()
-        .map_err(|e| JournalError::ExecutionError(e.to_string()))?;
-    storage.remove_host_key(&hostname, port)
-}
 
 // ============================================================================
 // Remote Journal Query Commands

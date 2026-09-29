@@ -1,5 +1,7 @@
 use crate::error::JournalError;
-use crate::journal::known_hosts::{HostKeyStatus, SharedKnownHostsStorage};
+use crate::journal::known_hosts::{
+    HostKeyInfo, HostKeyStatus, KnownHostsStorage, SharedKnownHostsStorage,
+};
 use crate::journal::types::{AuthMethod, RemoteHost, TestConnectionResult};
 use ssh2::Session;
 use std::io::Read;
@@ -15,31 +17,31 @@ pub struct SshConnection {
 }
 
 impl SshConnection {
-    /// Create a new SSH connection to a remote host with host key verification
+    /// Create a new SSH connection to a remote host with host key verification.
     pub fn connect(
         host: &RemoteHost,
         password: Option<&str>,
         known_hosts: &SharedKnownHostsStorage,
     ) -> Result<Self, JournalError> {
-        Self::connect_internal(host, password, Some(known_hosts), false)
+        Self::connect_internal(host, password, Some(known_hosts), None)
     }
 
-    /// Create a new SSH connection, accepting the host key if it's new
-    /// Use this only when the user has explicitly accepted the key
+    /// Connect using the exact host key that the user approved.
     pub fn connect_and_accept_key(
         host: &RemoteHost,
         password: Option<&str>,
         known_hosts: &SharedKnownHostsStorage,
+        expected_key: &HostKeyInfo,
     ) -> Result<Self, JournalError> {
-        Self::connect_internal(host, password, Some(known_hosts), true)
+        Self::connect_internal(host, password, Some(known_hosts), Some(expected_key))
     }
 
-    /// Internal connection method with optional host key verification
+    /// Internal connection method with optional host key verification.
     fn connect_internal(
         host: &RemoteHost,
         password: Option<&str>,
         known_hosts: Option<&SharedKnownHostsStorage>,
-        accept_new_key: bool,
+        expected_key: Option<&HostKeyInfo>,
     ) -> Result<Self, JournalError> {
         let addr = format!("{}:{}", host.hostname, host.port);
 
@@ -73,14 +75,24 @@ impl SshConnection {
 
             match status {
                 HostKeyStatus::Verified => {
-                    // Key matches - safe to proceed
+                    if let Some(expected) = expected_key {
+                        KnownHostsStorage::verify_expected_host_key(
+                            &session,
+                            &host.hostname,
+                            host.port,
+                            expected,
+                        )?;
+                    }
                 }
                 HostKeyStatus::NewHost { fingerprint, key_type } => {
-                    if accept_new_key {
-                        // User has accepted the new key
-                        storage.accept_host_key(&session, &host.hostname, host.port)?;
+                    if let Some(expected) = expected_key {
+                        storage.accept_expected_host_key(
+                            &session,
+                            &host.hostname,
+                            host.port,
+                            expected,
+                        )?;
                     } else {
-                        // New host - needs user confirmation
                         return Err(JournalError::HostKeyVerificationRequired(format!(
                             "New host key for {}:{}\nType: {}\nFingerprint: {}",
                             host.hostname, host.port, key_type, fingerprint
@@ -93,17 +105,28 @@ impl SshConnection {
                     old_key_type,
                     new_key_type,
                 } => {
-                    // Host key changed - potential MITM attack!
-                    return Err(JournalError::HostKeyChanged(format!(
-                        "WARNING: HOST KEY HAS CHANGED for {}:{}!\n\
-                        This could indicate a man-in-the-middle attack.\n\n\
-                        Previous key ({}):\n  {}\n\n\
-                        New key ({}):\n  {}\n\n\
-                        If you trust this change, remove the old key first.",
-                        host.hostname, host.port,
-                        old_key_type, old_fingerprint,
-                        new_key_type, new_fingerprint
-                    )));
+                    if let Some(expected) = expected_key {
+                        storage.accept_expected_host_key(
+                            &session,
+                            &host.hostname,
+                            host.port,
+                            expected,
+                        )?;
+                    } else {
+                        return Err(JournalError::HostKeyChanged(format!(
+                            "WARNING: HOST KEY HAS CHANGED for {}:{}!\n\
+                            This could indicate a man-in-the-middle attack.\n\n\
+                            Previous key ({}):\n  {}\n\n\
+                            New key ({}):\n  {}\n\n\
+                            Only confirm this key if you trust the change.",
+                            host.hostname,
+                            host.port,
+                            old_key_type,
+                            old_fingerprint,
+                            new_key_type,
+                            new_fingerprint
+                        )));
+                    }
                 }
             }
         }
@@ -327,17 +350,22 @@ impl ConnectionManager {
         Ok(())
     }
 
-    /// Connect to a host, accepting a new host key
-    /// Use this only when the user has explicitly accepted the key
+    /// Connect using the exact host key that the user approved.
     pub fn connect_and_accept_key(
         &mut self,
         host: &RemoteHost,
         password: Option<&str>,
+        expected_key: &HostKeyInfo,
     ) -> Result<(), JournalError> {
         // Disconnect any existing connection
         self.disconnect();
 
-        let conn = SshConnection::connect_and_accept_key(host, password, &self.known_hosts)?;
+        let conn = SshConnection::connect_and_accept_key(
+            host,
+            password,
+            &self.known_hosts,
+            expected_key,
+        )?;
         self.connection = Some(conn);
         Ok(())
     }

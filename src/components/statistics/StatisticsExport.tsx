@@ -1,6 +1,7 @@
 import { Download, Image } from 'lucide-react';
 import type { JournalStatistics } from '../../lib/types';
 import { logError } from '../../lib/errorLogger';
+import { serializeCsvDocument, type CsvCell } from '../../lib/csv';
 
 export interface ExportResult {
   type: 'success' | 'error';
@@ -19,30 +20,39 @@ export function StatisticsExport({
   onExportComplete,
 }: StatisticsExportProps) {
   const exportCSV = () => {
-    const lines: string[] = [
-      '# Journal Statistics Export',
-      `# Generated: ${new Date().toISOString()}`,
-      `# Total Entries: ${statistics.totalCount}`,
-      `# Error Rate: ${statistics.errorRate.toFixed(2)}%`,
-      '',
-      '## Time Series Data',
-      'Timestamp,Count,Errors,Warnings',
-      ...statistics.timeseries.map(
-        (p) =>
-          `${new Date(p.timestamp).toISOString()},${p.count},${p.errorCount},${p.warningCount}`
-      ),
-      '',
-      '## Priority Distribution',
-      'Priority,Label,Count',
-      ...statistics.priorityDistribution.map((p) => `${p.priority},${p.label},${p.count}`),
-      '',
-      '## Top Services',
-      'Service,Count',
-      ...statistics.topServices.map((s) => `"${s.service}",${s.count}`),
+    const rows: CsvCell[][] = [
+      ['# Journal Statistics Export'],
+      ['# Generated', new Date().toISOString()],
+      ['# Total Entries', statistics.totalCount],
+      ['# Error Rate', `${statistics.errorRate.toFixed(2)}%`],
+      [],
+      ['## Time Series Data'],
+      ['Timestamp', 'Count', 'Errors', 'Warnings'],
+      ...statistics.timeseries.map((point): CsvCell[] => [
+        new Date(point.timestamp).toISOString(),
+        point.count,
+        point.errorCount,
+        point.warningCount,
+      ]),
+      [],
+      ['## Priority Distribution'],
+      ['Priority', 'Label', 'Count'],
+      ...statistics.priorityDistribution.map((priority): CsvCell[] => [
+        priority.priority,
+        priority.label,
+        priority.count,
+      ]),
+      [],
+      ['## Top Services'],
+      ['Service', 'Count'],
+      ...statistics.topServices.map((service): CsvCell[] => [
+        service.service,
+        service.count,
+      ]),
     ];
 
     const filename = `journal-statistics-${new Date().toISOString().slice(0, 10)}.csv`;
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const blob = new Blob([serializeCsvDocument(rows)], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
