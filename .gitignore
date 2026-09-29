@@ -15,6 +15,10 @@ dist-ssr
 # Build cache (speeds up subsequent builds)
 *.tsbuildinfo
 
+# Generated development artifacts
+/coverage/
+/.omp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
