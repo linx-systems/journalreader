@@ -34,7 +34,7 @@ export function PriorityDistribution({ data, onSliceClick }: PriorityDistributio
               cx="50%"
               cy="50%"
               outerRadius="70%"
-              onClick={(entry) => onSliceClick?.(entry.priority)}
+              onClick={(entry) => onSliceClick?.(entry.payload.priority)}
               cursor="pointer"
               label={({ payload, percent }) => {
                 const p = percent ?? 0;
